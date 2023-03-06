@@ -43,6 +43,14 @@ config ACPI_MDIO
 
 if MDIO_BUS
 
+config MDIO_NETLINK
+	tristate "Netlink interface for MDIO buses"
+	help
+	  Enable a netlink interface to allow reading MDIO buses from
+	  userspace. A small virtual machine allows implementing complex
+	  operations, such as conditional reads or polling. All operations
+	  submitted in the same program are evaluated atomically.
+
 config MDIO_DEVRES
 	tristate
 
