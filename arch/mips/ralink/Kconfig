@@ -19,35 +19,18 @@ config IRQ_INTC
 	depends on !SOC_MT7621
 
 choice
-	prompt "Ralink SoC selection"
-	default SOC_RT305X
+	prompt "SoC selection"
 	help
-	  Select Ralink MIPS SoC type.
-
-	config SOC_RT288X
-		bool "RT288x"
-		select MIPS_AUTO_PFN_OFFSET
-		select MIPS_L1_CACHE_SHIFT_4
-		select HAVE_PCI
-		select SOC_BUS
-
-	config SOC_RT305X
-		bool "RT305x"
-		select SOC_BUS
-
-	config SOC_RT3883
-		bool "RT3883"
-		select HAVE_PCI
-		select SOC_BUS
+	  Select the SoC.
 
 	config SOC_MT7620
-		bool "MT7620/8"
+		bool "MediaTek MT7620, MT7628, MT7688"
 		select CPU_MIPSR2_IRQ_VI
 		select HAVE_PCI
 		select SOC_BUS
 
 	config SOC_MT7621
-		bool "MT7621"
+		bool "MediaTek MT7621"
 		select MIPS_CPU_SCACHE
 		select SYS_SUPPORTS_MULTITHREADING
 		select SYS_SUPPORTS_SMP
@@ -63,6 +46,23 @@ choice
 		help
 		  The MT7621 system-on-a-chip includes an 880 MHz MIPS1004Kc
 		  dual-core CPU, a 5-port 10/100/1000 switch/PHY and one RGMII.
+
+	config SOC_RT288X
+		bool "Ralink RT2880"
+		select MIPS_AUTO_PFN_OFFSET
+		select MIPS_L1_CACHE_SHIFT_4
+		select HAVE_PCI
+		select SOC_BUS
+
+	config SOC_RT305X
+		bool "Ralink RT3050, RT3052, RT3350, RT3352, RT5350"
+		select SOC_BUS
+
+	config SOC_RT3883
+		bool "Ralink RT3883"
+		select HAVE_PCI
+		select SOC_BUS
+
 endchoice
 
 choice
