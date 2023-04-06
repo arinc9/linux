@@ -8,28 +8,29 @@ title: MediaTek MT7530 and MT7531 Ethernet Switches
 
 maintainers:
   - Arınç ÜNAL <arinc.unal@arinc9.com>
+  - Daniel Golle <daniel@makrotopia.org>
   - Landen Chao <Landen.Chao@mediatek.com>
   - DENG Qingfang <dqfext@gmail.com>
   - Sean Wang <sean.wang@mediatek.com>
-  - Daniel Golle <daniel@makrotopia.org>
 
 description: |
-  There are three versions of MT7530, standalone, in a multi-chip module and
-  built-into a SoC.
+  There are three versions of MT7530, standalone, in a multi-chip module, and
+  built into an SoC.
 
-  MT7530 is a part of the multi-chip module in MT7620AN, MT7620DA, MT7620DAN,
-  MT7620NN, MT7621AT, MT7621DAT, MT7621ST and MT7623AI SoCs.
-
-  The MT7988 SoC comes with a built-in switch similar to MT7531 as well as four
-  Gigabit Ethernet PHYs. The switch registers are directly mapped into the SoC's
-  memory map rather than using MDIO. The switch got an internally connected 10G
-  CPU port and 4 user ports connected to the built-in Gigabit Ethernet PHYs.
+  MT7530 is a part of the multi-chip module in MT7621AT, MT7621DAT, MT7621ST and
+  MT7623AI SoCs.
 
   MT7530 in MT7620AN, MT7620DA, MT7620DAN and MT7620NN SoCs has got 10/100 PHYs
-  and the switch registers are directly mapped into SoC's memory map rather than
-  using MDIO. The DSA driver currently doesn't support MT7620 variants.
+  and the switch registers are directly mapped into the SoC's memory map rather
+  than using MDIO. The MT7530 MMIO driver currently doesn't support these SoCs.
 
   There is only the standalone version of MT7531.
+
+  The MT7988 SoC comes with a built-in switch with four Gigabit Ethernet PHYs.
+  The characteristics of the switch is similar to MT7531. The switch registers
+  are directly mapped into the SoC's memory map rather than using MDIO. The
+  switch has got an internally connected 10G CPU port and 4 user ports connected
+  to the built-in Gigabit Ethernet PHYs.
 
   Port 5 on MT7530 has got various ways of configuration:
 
