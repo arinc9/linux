@@ -188,6 +188,9 @@ $defs:
                       - gmii
                       - mii
                       - rgmii
+                      - rgmii-id
+                      - rgmii-rxid
+                      - rgmii-txid
               else:
                 properties:
                   phy-mode:
@@ -226,6 +229,9 @@ $defs:
                       - 1000base-x
                       - 2500base-x
                       - rgmii
+                      - rgmii-id
+                      - rgmii-rxid
+                      - rgmii-txid
                       - sgmii
               else:
                 properties:
