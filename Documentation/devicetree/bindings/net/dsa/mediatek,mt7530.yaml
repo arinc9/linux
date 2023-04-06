@@ -274,6 +274,10 @@ allOf:
       required:
         - resets
         - reset-names
+    else:
+      properties:
+        resets: false
+        reset-names: false
 
   - dependencies:
       interrupt-controller: [ interrupts ]
@@ -316,7 +320,6 @@ allOf:
       properties:
         gpio-controller: false
         mediatek,mcm: false
-        reset-names: false
 
 unevaluatedProperties: false
 
