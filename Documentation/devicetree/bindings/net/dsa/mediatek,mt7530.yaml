@@ -304,7 +304,6 @@ allOf:
       $ref: "#/$defs/mt7531-dsa-port"
       properties:
         gpio-controller: false
-        mediatek,mcm: false
 
   - if:
       properties:
