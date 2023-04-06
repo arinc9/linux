@@ -291,6 +291,10 @@ allOf:
       required:
         - core-supply
         - io-supply
+    else:
+      properties:
+        core-supply: false
+        io-supply: false
 
   - if:
       properties:
