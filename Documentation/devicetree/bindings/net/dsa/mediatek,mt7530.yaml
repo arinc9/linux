@@ -152,30 +152,6 @@ properties:
       ethsys.
     maxItems: 1
 
-patternProperties:
-  "^(ethernet-)?ports$":
-    type: object
-
-    patternProperties:
-      "^(ethernet-)?port@[0-9]+$":
-        type: object
-
-        properties:
-          reg:
-            description:
-              Port address described must be 5 or 6 for CPU port and from 0 to 5
-              for user ports.
-
-        allOf:
-          - if:
-              required: [ ethernet ]
-            then:
-              properties:
-                reg:
-                  enum:
-                    - 5
-                    - 6
-
 required:
   - compatible
   - reg
@@ -186,9 +162,21 @@ $defs:
       "^(ethernet-)?ports$":
         patternProperties:
           "^(ethernet-)?port@[0-9]+$":
+            properties:
+              reg:
+                description:
+                  Port address described must be 5 or 6 for the CPU port. User
+                  ports can be 0 to 6.
+
             if:
               required: [ ethernet ]
             then:
+              properties:
+                reg:
+                  enum:
+                    - 5
+                    - 6
+
               if:
                 properties:
                   reg:
@@ -212,9 +200,21 @@ $defs:
       "^(ethernet-)?ports$":
         patternProperties:
           "^(ethernet-)?port@[0-9]+$":
+            properties:
+              reg:
+                description:
+                  Port address described must be 5 or 6 for the CPU port. User
+                  ports can be 0 to 6.
+
             if:
               required: [ ethernet ]
             then:
+              properties:
+                reg:
+                  enum:
+                    - 5
+                    - 6
+
               if:
                 properties:
                   reg:
@@ -234,6 +234,27 @@ $defs:
                       - 1000base-x
                       - 2500base-x
                       - sgmii
+
+  mt7988-dsa-port:
+    patternProperties:
+      "^(ethernet-)?ports$":
+        patternProperties:
+          "^(ethernet-)?port@[0-9]+$":
+            properties:
+              reg:
+                description:
+                  Port address described must be 6 for the CPU port. User ports
+                  can be 0 to 3, and 6.
+
+            if:
+              required: [ ethernet ]
+            then:
+              properties:
+                reg:
+                  const: 6
+
+                phy-mode:
+                  const: internal
 
 allOf:
   - $ref: dsa.yaml#/$defs/ethernet-ports
@@ -285,7 +306,7 @@ allOf:
         compatible:
           const: mediatek,mt7988-switch
     then:
-      $ref: "#/$defs/mt7530-dsa-port"
+      $ref: "#/$defs/mt7988-dsa-port"
       properties:
         gpio-controller: false
         mediatek,mcm: false
