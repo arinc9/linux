@@ -252,15 +252,22 @@ $defs:
                   Port address described must be 6 for the CPU port. User ports
                   can be 0 to 3, and 6.
 
+              phy-mode:
+                const: internal
+
             if:
               required: [ ethernet ]
             then:
               properties:
                 reg:
                   const: 6
+            else:
+              properties:
+                reg:
+                  enum: [0, 1, 2, 3, 6]
 
-                phy-mode:
-                  const: internal
+              required:
+                - phy-mode
 
 allOf:
   - $ref: dsa.yaml#/$defs/ethernet-ports
