@@ -861,6 +861,12 @@ static inline void INIT_MT7530_DUMMY_POLL(struct mt7530_dummy_poll *p,
 	p->reg = reg;
 }
 
+u32 mt7530_read(struct mt7530_priv *priv, u32 reg);
+void mt7530_write(struct mt7530_priv *priv, u32 reg, u32 val);
+int mt7531_ind_c45_phy_read(struct mt7530_priv *priv, int port, int devad, int regnum);
+int mt7531_ind_c45_phy_write(struct mt7530_priv *priv, int port, int devad, int regnum, u16 data);
+int mt7531_ind_c22_phy_read(struct mt7530_priv *priv, int port, int regnum);
+int mt7531_ind_c22_phy_write(struct mt7530_priv *priv, int port, int regnum, u16 data);
 int mt7530_probe_common(struct mt7530_priv *priv);
 void mt7530_remove_common(struct mt7530_priv *priv);
 

@@ -24,6 +24,8 @@
 #include <net/dsa.h>
 
 #include "mt7530.h"
+#include "mt7530_nl.h"
+
 
 static struct mt753x_pcs *pcs_to_mt753x_pcs(struct phylink_pcs *pcs)
 {
@@ -210,7 +212,7 @@ mt7530_mii_read(struct mt7530_priv *priv, u32 reg)
 	return val;
 }
 
-static void
+void
 mt7530_write(struct mt7530_priv *priv, u32 reg, u32 val)
 {
 	mt7530_mutex_lock(priv);
@@ -240,7 +242,7 @@ _mt7530_read(struct mt7530_dummy_poll *p)
 	return val;
 }
 
-static u32
+u32
 mt7530_read(struct mt7530_priv *priv, u32 reg)
 {
 	struct mt7530_dummy_poll p;
@@ -574,7 +576,7 @@ static int mt7530_phy_write_c45(struct mt7530_priv *priv, int port, int devad,
 	return mdiobus_c45_write_nested(priv->bus, port, devad, regnum, val);
 }
 
-static int
+int
 mt7531_ind_c45_phy_read(struct mt7530_priv *priv, int port, int devad,
 			int regnum)
 {
@@ -622,7 +624,7 @@ out:
 	return ret;
 }
 
-static int
+int
 mt7531_ind_c45_phy_write(struct mt7530_priv *priv, int port, int devad,
 			 int regnum, u16 data)
 {
@@ -669,7 +671,7 @@ out:
 	return ret;
 }
 
-static int
+int
 mt7531_ind_c22_phy_read(struct mt7530_priv *priv, int port, int regnum)
 {
 	struct mt7530_dummy_poll p;
@@ -706,7 +708,7 @@ out:
 	return ret;
 }
 
-static int
+int
 mt7531_ind_c22_phy_write(struct mt7530_priv *priv, int port, int regnum,
 			 u16 data)
 {
@@ -3346,6 +3348,8 @@ mt7530_probe_common(struct mt7530_priv *priv)
 	mutex_init(&priv->reg_mutex);
 	dev_set_drvdata(dev, priv);
 
+	mt7530_nl_init(&priv);
+
 	return 0;
 }
 EXPORT_SYMBOL_GPL(mt7530_probe_common);
@@ -3359,6 +3363,8 @@ mt7530_remove_common(struct mt7530_priv *priv)
 	dsa_unregister_switch(priv->ds);
 
 	mutex_destroy(&priv->reg_mutex);
+
+	mt7530_nl_exit();
 }
 EXPORT_SYMBOL_GPL(mt7530_remove_common);
 
