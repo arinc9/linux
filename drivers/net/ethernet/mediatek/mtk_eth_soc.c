@@ -480,8 +480,10 @@ static int mt7621_gmac0_rgmii_adjust(struct mtk_eth *eth,
 }
 
 static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
-				   phy_interface_t interface)
+				   phy_interface_t interface, int speed)
 {
+	unsigned long rate;
+	u32 tck, rck, intf;
 	int ret;
 
 	if (interface == PHY_INTERFACE_MODE_TRGMII) {
@@ -492,7 +494,32 @@ static void mtk_gmac0_rgmii_adjust(struct mtk_eth *eth,
 		return;
 	}
 
-	dev_err(eth->dev, "Missing PLL configuration, ethernet may not work\n");
+	if (speed == SPEED_1000) {
+		intf = INTF_MODE_RGMII_1000;
+		rate = 250000000;
+		rck = RCK_CTRL_RGMII_1000;
+		tck = TCK_CTRL_RGMII_1000;
+	} else {
+		intf = INTF_MODE_RGMII_10_100;
+		rate = 500000000;
+		rck = RCK_CTRL_RGMII_10_100;
+		tck = TCK_CTRL_RGMII_10_100;
+	}
+
+	mtk_w32(eth, intf, INTF_MODE);
+
+	regmap_update_bits(eth->ethsys, ETHSYS_CLKCFG0,
+			   ETHSYS_TRGMII_CLK_SEL362_5,
+			   ETHSYS_TRGMII_CLK_SEL362_5);
+
+	ret = clk_set_rate(eth->clks[MTK_CLK_TRGPLL], rate);
+	if (ret)
+		dev_err(eth->dev, "Failed to set trgmii pll: %d\n", ret);
+
+	mtk_w32(eth, rck, TRGMII_RCK_CTRL);
+	mtk_w32(eth, tck, TRGMII_TCK_CTRL);
+
+	dev_info(eth->dev, "the end of mtk_gmac0_rgmii_adjust()\n");
 }
 
 static void mtk_setup_bridge_switch(struct mtk_eth *eth)
@@ -583,14 +610,25 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 							      state->interface))
 					goto err_phy;
 			} else {
-				mtk_gmac0_rgmii_adjust(mac->hw,
-						       state->interface);
+				dev_info(eth->dev, "trgmii or rgmii detected on mt7623\n");
 
-				/* mt7623_pad_clk_setup */
-				for (i = 0 ; i < NUM_TRGMII_CTRL; i++)
-					mtk_w32(mac->hw,
-						TD_DM_DRVP(8) | TD_DM_DRVN(8),
-						TRGMII_TD_ODT(i));
+				/* FIXME: this is incorrect. Not only does it
+				 * use state->speed (which is not guaranteed
+				 * to be correct) but it also makes use of it
+				 * in a code path that will only be reachable
+				 * when the PHY interface mode changes, not
+				 * when the speed changes. Consequently, RGMII
+				 * is probably broken.
+				 */
+			// 	mtk_gmac0_rgmii_adjust(mac->hw,
+			// 			       state->interface,
+			// 			       state->speed);
+
+				// /* mt7623_pad_clk_setup */
+				// for (i = 0 ; i < NUM_TRGMII_CTRL; i++)
+				// 	mtk_w32(mac->hw,
+				// 		TD_DM_DRVP(8) | TD_DM_DRVN(8),
+				// 		TRGMII_TD_ODT(i));
 
 				/* Assert/release MT7623 RXC reset */
 				mtk_m32(mac->hw, 0, RXC_RST | RXC_DQSISEL,
@@ -608,6 +646,8 @@ static void mtk_mac_config(struct phylink_config *config, unsigned int mode,
 			ge_mode = 0;
 			break;
 		}
+
+		dev_info(eth->dev, "ge_mode=%d\n", ge_mode);
 
 		/* put the gmac into the right mode */
 		regmap_read(eth->ethsys, ETHSYS_SYSCFG0, &val);
