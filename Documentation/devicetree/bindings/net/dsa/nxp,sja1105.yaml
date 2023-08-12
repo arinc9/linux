@@ -35,43 +35,57 @@ properties:
   spi-cpha: true
   spi-cpol: true
 
-  # Optional container node for the 2 internal MDIO buses of the SJA1110
-  # (one for the internal 100base-T1 PHYs and the other for the single
-  # 100base-TX PHY). The "reg" property does not have physical significance.
-  # The PHY addresses to port correspondence is as follows: for 100base-T1,
-  # port 5 has PHY 1, port 6 has PHY 2 etc, while for 100base-TX, port 1 has
-  # PHY 1.
   mdios:
+    description:
+      The optional container node for the two MDIO buses of the SJA1110.
     type: object
     additionalProperties: false
 
     properties:
       '#address-cells':
         const: 1
+
       '#size-cells':
         const: 0
 
-    patternProperties:
-      "^mdio@[0-1]$":
+      mdio@0:
+        description:
+          The node for the bus controlling the 100base-T1 PHYs of the SJA1110
+          switch. PHY address to port correspondence is port 5 has PHY 1, port 6
+          has PHY 2, etc.
         $ref: /schemas/net/mdio.yaml#
         unevaluatedProperties: false
 
         properties:
           compatible:
-            oneOf:
-              - enum:
-                  - nxp,sja1110-base-t1-mdio
-                  - nxp,sja1110-base-tx-mdio
+            const: nxp,sja1110-base-t1-mdio
 
           reg:
-            oneOf:
-              - enum:
-                  - 0
-                  - 1
+            const: 0
 
         required:
           - compatible
-          - reg
+
+      mdio@1:
+        description:
+          The node for the bus controlling the 100base-TX PHY of the SJA1110
+          switch. PHY address to port correspondence is port 1 has PHY 1.
+        $ref: /schemas/net/mdio.yaml#
+        unevaluatedProperties: false
+
+        properties:
+          compatible:
+            const: nxp,sja1110-base-tx-mdio
+
+          reg:
+            const: 1
+
+        required:
+          - compatible
+
+    anyOf:
+      - required: [ mdio@0 ]
+      - required: [ mdio@1 ]
 
 patternProperties:
   "^(ethernet-)?ports$":
@@ -126,6 +140,7 @@ allOf:
     then:
       properties:
         spi-cpol: false
+        mdios: false
       required:
         - spi-cpha
     else:
