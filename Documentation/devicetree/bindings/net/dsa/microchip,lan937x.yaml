@@ -69,16 +69,6 @@ examples:
   - |
     #include <dt-bindings/gpio/gpio.h>
 
-    macb0 {
-            #address-cells = <1>;
-            #size-cells = <0>;
-
-            fixed-link {
-                    speed = <1000>;
-                    full-duplex;
-            };
-    };
-
     spi {
             #address-cells = <1>;
             #size-cells = <0>;
@@ -135,10 +125,10 @@ examples:
 
                             port@5 {
                                     reg = <5>;
-                                    label = "lan7";
                                     phy-mode = "rgmii";
                                     tx-internal-delay-ps = <2000>;
                                     rx-internal-delay-ps = <2000>;
+                                    ethernet = <&macb1>;
 
                                     fixed-link {
                                             speed = <1000>;
