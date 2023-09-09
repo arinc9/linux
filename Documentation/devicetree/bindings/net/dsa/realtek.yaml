@@ -111,18 +111,19 @@ if:
 
 then:
   $ref: /schemas/spi/spi-peripheral-props.yaml#
-  not:
-    required:
-      - mdc-gpios
-      - mdio-gpios
-      - mdio
-
   properties:
     mdc-gpios: false
     mdio-gpios: false
-    mdio: false
+    mdio:
+      properties:
+        compatible: false
 
 else:
+  properties:
+    mdio:
+      required:
+        - compatible
+
   required:
     - mdc-gpios
     - mdio-gpios
@@ -131,11 +132,6 @@ else:
 
 required:
   - compatible
-
-    #  - mdc-gpios
-    #  - mdio-gpios
-    #  - reset-gpios
-    #  - mdio
 
 unevaluatedProperties: false
 
