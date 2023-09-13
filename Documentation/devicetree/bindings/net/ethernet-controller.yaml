@@ -284,6 +284,35 @@ allOf:
             controllers that have configurable TX internal delays. If this
             property is present then the MAC applies the TX delay.
 
+$defs:
+  phylink:
+    description: phylink bindings for ethernet controllers
+    allOf:
+      - anyOf:
+          - required: [ fixed-link ]
+          - required: [ pcs-handle ]
+          - required: [ tbi-handle ]
+          - required: [ phy-handle ]
+          - required: [ sfp ]
+          - required: [ managed ]
+
+      - if:
+          required: [ fixed-link ]
+        then:
+          properties:
+            managed:
+              const: auto
+
+      - if:
+          required: [ sfp ]
+        then:
+          oneOf:
+            - required: [ phy-handle ]
+            - required: [ managed ]
+              properties:
+                managed:
+                  const: in-band-status
+
 additionalProperties: true
 
 ...

@@ -65,16 +65,8 @@ if:
     - required: [ ethernet ]
     - required: [ link ]
 then:
-  allOf:
-    - required:
-        - phy-mode
-    - oneOf:
-        - required:
-            - fixed-link
-        - required:
-            - phy-handle
-        - required:
-            - managed
+  $ref: /schemas/net/ethernet-controller.yaml#/$defs/phylink
+  required: [ phy-mode ]
 
 additionalProperties: true
 
