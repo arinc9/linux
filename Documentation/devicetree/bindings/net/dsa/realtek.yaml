@@ -98,6 +98,10 @@ properties:
       - '#interrupt-cells'
 
   mdio:
+    description:
+      The node for the MDIO bus of the switch. For the MDIO controlled switches,
+      this is optional and the bus will be registered non-OF-based if this is
+      not defined.
     $ref: /schemas/net/mdio.yaml#
     unevaluatedProperties: false
 

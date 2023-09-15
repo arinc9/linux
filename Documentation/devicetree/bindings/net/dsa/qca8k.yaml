@@ -60,13 +60,13 @@ properties:
       B68 on the QCA832x and B49 on the QCA833x.
 
   mdio:
+    description:
+      The optional node for the MDIO bus of the switch. The bus will be
+      registered non-OF-based if this is not defined. In that case, the legacy
+      mapping will be used. With the legacy mapping, the reg corresponding to
+      the MDIO bus is the switch reg with an offset of -1.
     $ref: /schemas/net/mdio.yaml#
     unevaluatedProperties: false
-    description: Qca8k switch have an internal mdio to access switch port.
-                 If this is not present, the legacy mapping is used and the
-                 internal mdio access is used.
-                 With the legacy mapping the reg corresponding to the internal
-                 mdio is the switch reg with an offset of -1.
 
 $ref: dsa.yaml#
 

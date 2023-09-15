@@ -46,6 +46,9 @@ properties:
     maxItems: 1
 
   mdio:
+    description:
+      The optional node for the MDIO bus of the switch. The bus won't be
+      registered if this is not defined.
     $ref: /schemas/net/mdio.yaml#
     unevaluatedProperties: false
 

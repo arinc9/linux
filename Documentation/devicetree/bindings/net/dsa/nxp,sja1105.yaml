@@ -37,7 +37,8 @@ properties:
 
   mdios:
     description:
-      The optional container node for the two MDIO buses of the SJA1110.
+      The optional container node for the two MDIO buses of the SJA1110. The bus
+      won't be registered if its node is not defined.
     type: object
     additionalProperties: false
 
