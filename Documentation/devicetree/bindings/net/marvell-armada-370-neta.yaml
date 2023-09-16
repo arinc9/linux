@@ -1,0 +1,102 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/net/marvell-armada-370-neta.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Marvell Armada 370 / Armada XP / Armada 3700 Ethernet Controller (NETA)
+
+allOf:
+  - $ref: ethernet-controller.yaml#
+  - $ref: ethernet-controller.yaml#/$defs/phylink
+
+maintainers:
+  - Arınç ÜNAL <arinc.unal@arinc9.com>
+
+properties:
+  compatible:
+    enum:
+      - marvell,armada-370-neta
+      - marvell,armada-xp-neta
+      - marvell,armada-3700-neta
+      - marvell,armada-ac5-neta
+
+  reg:
+    maxItems: 1
+
+  interrupts:
+    maxItems: 1
+
+  clocks:
+    description:
+      List of clocks for this device. At least one clock is mandatory for the
+      core clock. If several clocks are given, then the clock-names property
+      must be used to identify them.
+
+  tx-csum-limit:
+    description:
+      Maximum mtu supported by port that allow TX checksum. Value is presented
+      in bytes. If not used, by default 1600B is set for
+      "marvell,armada-370-neta" and 9800B for others.
+
+  clock-names:
+    description:
+      List of names corresponding to clocks property; shall be "core" for core
+      clock and "bus" for the optional bus clock.
+
+  phys:
+    description:
+      comphy for the ethernet port, see ../phy/phy-bindings.txt.
+
+if:
+  properties:
+    compatible:
+      enum:
+        - marvell,armada-370-neta
+        - marvell,armada-xp-neta
+then:
+  properties:
+    buffer-manager:
+      description:
+        A phandle to a buffer manager node. Please refer to
+        Documentation/devicetree/bindings/net/marvell-neta-bm.txt.
+
+    bm,pool-long:
+      description:
+        ID of a pool, that will accept all packets of a size higher than 'short'
+        pool's threshold (if set) and up to MTU value. Obligatory, when the port
+        is supposed to use hardware buffer management.
+
+    bm,pool-short:
+      description:
+        ID of a pool, that will be used for accepting packets of a size lower
+        than given threshold. If not set, the port will use a single 'long' pool
+        for all packets, as defined above.
+
+required:
+  - compatible
+  - reg
+  - interrupts
+  - phy-mode
+  - clocks
+
+unevaluatedProperties: false
+
+examples:
+  - |
+    ethernet@70000 {
+        compatible = "marvell,armada-370-neta";
+        reg = <0x70000 0x2500>;
+        interrupts = <8>;
+        clocks = <&gate_clk 4>;
+        tx-csum-limit = <9800>;
+        phy-mode = "rgmii-id";
+        buffer-manager = <&bm>;
+        bm,pool-long = <0>;
+        bm,pool-short = <1>;
+
+        fixed-link {
+            speed = <1000>;
+            full-duplex;
+        };
+    };

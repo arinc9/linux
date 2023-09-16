@@ -20,7 +20,7 @@ Optional properties (port):
   If not set a driver will choose a default value.
 
 In order to see how to hook the BM to a given ethernet port, please
-refer to Documentation/devicetree/bindings/net/marvell-armada-370-neta.txt.
+refer to Documentation/devicetree/bindings/net/marvell-armada-370-neta.yaml.
 
 Example:
 
