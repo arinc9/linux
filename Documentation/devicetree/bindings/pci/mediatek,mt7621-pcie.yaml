@@ -33,7 +33,6 @@ properties:
 patternProperties:
   '^pcie@[0-2],0$':
     type: object
-    $ref: /schemas/pci/pci-bus.yaml#
 
     properties:
       resets:
@@ -57,8 +56,6 @@ patternProperties:
       - phys
       - phy-names
       - ranges
-
-    unevaluatedProperties: false
 
 required:
   - compatible

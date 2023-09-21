@@ -19,17 +19,18 @@ description: |
   Alternatively, it can specify the wireless part of the MT7628/MT7688
   or MT7622/MT7986 SoC.
 
-allOf:
-  - $ref: ieee80211.yaml#
+$ref: ieee80211.yaml#
 
 properties:
   compatible:
-    enum:
-      - mediatek,mt76
-      - mediatek,mt7628-wmac
-      - mediatek,mt7622-wmac
-      - mediatek,mt7981-wmac
-      - mediatek,mt7986-wmac
+    oneOf:
+      - contains:
+          const: mediatek,mt76
+      - enum:
+          - mediatek,mt7628-wmac
+          - mediatek,mt7622-wmac
+          - mediatek,mt7981-wmac
+          - mediatek,mt7986-wmac
 
   reg:
     minItems: 1
@@ -37,38 +38,11 @@ properties:
     description:
       MT7986 should contain 3 regions consys, dcm, and sku, in this order.
 
-  interrupts:
-    maxItems: 1
-
   power-domains:
     maxItems: 1
 
   memory-region:
     maxItems: 1
-
-  resets:
-    maxItems: 1
-    description:
-      Specify the consys reset for mt7986.
-
-  reset-names:
-    const: consys
-
-  clocks:
-    maxItems: 2
-    description:
-      Specify the consys clocks for mt7986.
-
-  clock-names:
-    items:
-      - const: mcu
-      - const: ap2conn
-
-  mediatek,infracfg:
-    $ref: /schemas/types.yaml#/definitions/phandle
-    description:
-      Phandle to the infrastructure bus fabric syscon node.
-      This property is MT7622 specific
 
   ieee80211-freq-limit: true
 
@@ -213,20 +187,101 @@ properties:
                     description:
                       Half-dBm power delta for different numbers of antennas
 
+allOf:
+  - if:
+      properties:
+        compatible:
+          enum:
+            - mediatek,mt7628-wmac
+            - mediatek,mt7622-wmac
+            - mediatek,mt7981-wmac
+            - mediatek,mt7986-wmac
+
+    then:
+      properties:
+        interrupts:
+          maxItems: 1
+
+      required:
+        - interrupts
+
+  - if:
+      properties:
+        compatible:
+          const: mediatek,mt7622-wmac
+
+    then:
+      properties:
+        mediatek,infracfg:
+          $ref: /schemas/types.yaml#/definitions/phandle
+          description:
+            Phandle to the infrastructure bus fabric syscon node.
+
+      required:
+        - mediatek,infracfg
+
+  - if:
+      properties:
+        compatible:
+          const: mediatek,mt7986-wmac
+
+    then:
+      properties:
+        resets:
+          maxItems: 1
+          description:
+            Specify the consys reset.
+
+        reset-names:
+          const: consys
+
+        clocks:
+          maxItems: 2
+          description:
+            Specify the consys clocks.
+
+        clock-names:
+          items:
+            - const: mcu
+            - const: ap2conn
+
+      required:
+        - resets
+        - reset-names
+        - clocks
+        - clock-names
+
 required:
   - compatible
   - reg
 
-unevaluatedProperties: false
+# pci nodes will have additional properties. split -wmac compatibles to another
+# schema to restrict properties.
+additionalProperties: true
 
 examples:
   - |
-    pcie0 {
+    pcie@1e140000 {
+      reg = <0x1e140000 0x100>,
+            <0x1e142000 0x100>,
+            <0x1e143000 0x100>,
+            <0x1e144000 0x100>;
+
       #address-cells = <3>;
       #size-cells = <2>;
-      wifi@0,0 {
-        compatible = "mediatek,mt76";
+
+      device_type = "pci";
+
+      ranges = <0x02000000 0 0x60000000 0x60000000 0 0x10000000>,
+               <0x01000000 0 0x00000000 0x1e160000 0 0x00010000>;
+
+      pcie@0,0 {
+        compatible = "mediatek,mt76", "pci0000,0";
         reg = <0x0000 0 0 0 0>;
+        #address-cells = <3>;
+        #size-cells = <2>;
+        device_type = "pci";
+        ranges;
         ieee80211-freq-limit = <5000000 6000000>;
         mediatek,mtd-eeprom = <&factory 0x8000>;
         big-endian;

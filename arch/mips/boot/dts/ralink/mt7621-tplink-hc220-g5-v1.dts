@@ -62,6 +62,14 @@
 
 &pcie {
 	status = "okay";
+
+	pcie@0,0 {
+		compatible = "mediatek,mt76", "pci0000,0";
+	};
+
+	pcie@1,0 {
+		compatible = "mediatek,mt76", "pci0800,0";
+	};
 };
 
 &switch0 {
