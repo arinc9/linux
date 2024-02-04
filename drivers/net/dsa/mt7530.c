@@ -1502,6 +1502,7 @@ mt7530_port_set_vlan_unaware(struct dsa_switch *ds, int port)
 		   PVC_EG_TAG(MT7530_VLAN_EG_CONSISTENT) |
 		   MT7530_VLAN_ACC_ALL);
 
+	dev_info(priv->dev, "mt7530_port_set_vlan_unaware ran, setting PVID to 0 on port%d\n", port);
 	/* Set PVID to 0 */
 	mt7530_rmw(priv, MT7530_PPBV1_P(port), G0_PORT_VID_MASK,
 		   G0_PORT_VID_DEF);
@@ -1532,6 +1533,8 @@ static void
 mt7530_port_set_vlan_aware(struct dsa_switch *ds, int port)
 {
 	struct mt7530_priv *priv = ds->priv;
+
+	dev_info(priv->dev, "mt7530_port_set_vlan_aware ran for port%d\n", port);
 
 	/* Trapped into security mode allows packet forwarding through VLAN
 	 * table lookup.
@@ -1624,6 +1627,8 @@ mt7530_port_fdb_add(struct dsa_switch *ds, int port,
 	int ret;
 	u8 port_mask = BIT(port);
 
+	dev_info(priv->dev, "mt7530_port_fdb_add ran for port%d, vid=%d, addr=%pM\n", port, vid, addr);
+
 	mutex_lock(&priv->reg_mutex);
 	mt7530_fdb_write(priv, vid, port_mask, addr, -1, STATIC_ENT);
 	ret = mt7530_fdb_cmd(priv, MT7530_FDB_WRITE, NULL);
@@ -1640,6 +1645,8 @@ mt7530_port_fdb_del(struct dsa_switch *ds, int port,
 	struct mt7530_priv *priv = ds->priv;
 	int ret;
 	u8 port_mask = BIT(port);
+
+	dev_info(priv->dev, "mt7530_port_fdb_del ran for port%d, vid=%d, addr=%pM\n", port, vid, addr);
 
 	mutex_lock(&priv->reg_mutex);
 	mt7530_fdb_write(priv, vid, port_mask, addr, -1, STATIC_EMP);
@@ -1658,6 +1665,8 @@ mt7530_port_fdb_dump(struct dsa_switch *ds, int port,
 	int cnt = MT7530_NUM_FDB_RECORDS;
 	int ret = 0;
 	u32 rsp = 0;
+
+	dev_info(priv->dev, "mt7530_port_fdb_dump ran for port%d\n", port);
 
 	mutex_lock(&priv->reg_mutex);
 
@@ -1772,6 +1781,9 @@ mt7530_port_vlan_filtering(struct dsa_switch *ds, int port, bool vlan_filtering,
 {
 	struct dsa_port *dp = dsa_to_port(ds, port);
 	struct dsa_port *cpu_dp = dp->cpu_dp;
+	struct mt7530_priv *priv = ds->priv;
+
+	dev_info(priv->dev, "mt7530_port_vlan_filtering ran for port%d, vlan_filtering=%d\n", port, vlan_filtering);
 
 	if (vlan_filtering) {
 		/* The port is being kept as VLAN-unaware port when bridge is
@@ -1900,6 +1912,9 @@ mt7530_port_vlan_add(struct dsa_switch *ds, int port,
 	mt7530_hw_vlan_entry_init(&new_entry, port, untagged);
 	mt7530_hw_vlan_update(priv, vlan->vid, &new_entry, mt7530_hw_vlan_add);
 
+	dev_info(priv->dev, "mt7530_port_vlan_add ran for port%d, vid=%d, untagged=%s, pvid=%s", port, vlan->vid, untagged ? "true" : "false", pvid ? "true\n" : "false\n");
+	//mt7530_rmw(priv, MT7530_PVC_P(port), ACC_FRM_MASK, MT7530_VLAN_ACC_ALL);
+
 	if (pvid) {
 		priv->ports[port].pvid = vlan->vid;
 
@@ -1937,6 +1952,8 @@ mt7530_port_vlan_del(struct dsa_switch *ds, int port,
 	struct mt7530_hw_vlan_entry target_entry;
 	struct mt7530_priv *priv = ds->priv;
 
+	dev_info(priv->dev, "mt7530_port_vlan_del ran for port%d, vid=%d\n", port, vlan->vid);
+
 	mutex_lock(&priv->reg_mutex);
 
 	mt7530_hw_vlan_entry_init(&target_entry, port, 0);
@@ -1948,6 +1965,8 @@ mt7530_port_vlan_del(struct dsa_switch *ds, int port,
 	 */
 	if (priv->ports[port].pvid == vlan->vid) {
 		priv->ports[port].pvid = G0_PORT_VID_DEF;
+
+		dev_info(priv->dev, "mt7530_port_vlan_del: set PVID 0 on port%d\n", port);
 
 		/* Only accept tagged frames if the port is VLAN-aware */
 		if (dsa_port_is_vlan_filtering(dsa_to_port(ds, port)))
