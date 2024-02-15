@@ -1163,7 +1163,7 @@ mt7530_port_pre_bridge_flags(struct dsa_switch *ds, int port,
 			     struct netlink_ext_ack *extack)
 {
 	if (flags.mask & ~(BR_LEARNING | BR_FLOOD | BR_MCAST_FLOOD |
-			   BR_BCAST_FLOOD))
+			   BR_BCAST_FLOOD | BR_ISOLATED))
 		return -EINVAL;
 
 	return 0;
@@ -1175,6 +1175,8 @@ mt7530_port_bridge_flags(struct dsa_switch *ds, int port,
 			 struct netlink_ext_ack *extack)
 {
 	struct mt7530_priv *priv = ds->priv;
+	struct dsa_port *dp = dsa_to_port(ds, port);
+	struct dsa_port *cpu_dp = dp->cpu_dp;
 
 	if (flags.mask & BR_LEARNING)
 		mt7530_rmw(priv, MT7530_PSC_P(port), SA_DIS,
@@ -1191,6 +1193,15 @@ mt7530_port_bridge_flags(struct dsa_switch *ds, int port,
 	if (flags.mask & BR_BCAST_FLOOD)
 		mt7530_rmw(priv, MT7530_MFC, BC_FFP(BIT(port)),
 			   flags.val & BR_BCAST_FLOOD ? BC_FFP(BIT(port)) : 0);
+
+	if (flags.mask & BR_ISOLATED) {
+		/* Set PCR_MATRIX of the port to itself and its CPU port */
+		mt7530_rmw(priv, MT7530_PCR_P(port), PCR_MATRIX_MASK,
+			   PCR_MATRIX(BIT(cpu_dp->index) | BIT(port)));
+
+		priv->ports[port].pm = PCR_MATRIX(BIT(cpu_dp->index) |
+				       BIT(port));
+	}
 
 	return 0;
 }
