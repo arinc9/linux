@@ -1438,41 +1438,38 @@ mt7530_port_set_vlan_unaware(struct dsa_switch *ds, int port)
 static void
 mt7530_port_set_vlan_aware(struct dsa_switch *ds, int port)
 {
+	struct dsa_port *dp = dsa_to_port(ds, port);
+	struct dsa_port *cpu_dp = dp->cpu_dp;
 	struct mt7530_priv *priv = ds->priv;
 
 	/* Trapped into security mode allows packet forwarding through VLAN
 	 * table lookup.
 	 */
-	if (dsa_is_user_port(ds, port)) {
-		mt7530_rmw(priv, MT7530_PCR_P(port), PCR_PORT_VLAN_MASK,
-			   MT7530_PORT_SECURITY_MODE);
-		mt7530_rmw(priv, MT7530_PPBV1_P(port), G0_PORT_VID_MASK,
-			   G0_PORT_VID(priv->ports[port].pvid));
+	mt7530_rmw(priv, MT7530_PCR_P(port), PCR_PORT_VLAN_MASK,
+		   MT7530_PORT_SECURITY_MODE);
+	mt7530_rmw(priv, MT7530_PPBV1_P(port), G0_PORT_VID_MASK,
+		   G0_PORT_VID(priv->ports[port].pvid));
 
-		/* Only accept tagged frames if PVID is not set */
-		if (!priv->ports[port].pvid)
-			mt7530_rmw(priv, MT7530_PVC_P(port), ACC_FRM_MASK,
-				   MT7530_VLAN_ACC_TAGGED);
+	/* Only accept tagged frames if PVID is not set */
+	if (!priv->ports[port].pvid)
+		mt7530_rmw(priv, MT7530_PVC_P(port), ACC_FRM_MASK,
+			   MT7530_VLAN_ACC_TAGGED);
 
-		/* Set the port as a user port which is to be able to recognize
-		 * VID from incoming packets before fetching entry within the
-		 * VLAN table.
-		 */
-		mt7530_rmw(priv, MT7530_PVC_P(port),
-			   VLAN_ATTR_MASK | PVC_EG_TAG_MASK,
-			   VLAN_ATTR(MT7530_VLAN_USER) |
-			   PVC_EG_TAG(MT7530_VLAN_EG_DISABLED));
-	} else {
-		/* Also set CPU ports to the "user" VLAN port attribute, to
-		 * allow VLAN classification, but keep the EG_TAG attribute as
-		 * "consistent" (i.o.w. don't change its value) for packets
-		 * received by the switch from the CPU, so that tagged packets
-		 * are forwarded to user ports as tagged, and untagged as
-		 * untagged.
-		 */
-		mt7530_rmw(priv, MT7530_PVC_P(port), VLAN_ATTR_MASK,
-			   VLAN_ATTR(MT7530_VLAN_USER));
-	}
+	/* Set the port as a user port which is to be able to recognize VID from
+	 * incoming packets before fetching entry within the VLAN table.
+	 */
+	mt7530_rmw(priv, MT7530_PVC_P(port), VLAN_ATTR_MASK | PVC_EG_TAG_MASK,
+		   VLAN_ATTR(MT7530_VLAN_USER) |
+		   PVC_EG_TAG(MT7530_VLAN_EG_DISABLED));
+
+	/* Also set the user port's CPU port to the "user" VLAN port attribute,
+	 * to allow VLAN classification, but keep the EG_TAG attribute as
+	 * "consistent" (i.o.w. don't change its value) for packets received by
+	 * the switch from the CPU, so that tagged packets are forwarded to user
+	 * ports as tagged, and untagged as untagged.
+	 */
+	mt7530_rmw(priv, MT7530_PVC_P(cpu_dp->index), VLAN_ATTR_MASK,
+		   VLAN_ATTR(MT7530_VLAN_USER));
 }
 
 static void
@@ -1677,20 +1674,14 @@ static int
 mt7530_port_vlan_filtering(struct dsa_switch *ds, int port, bool vlan_filtering,
 			   struct netlink_ext_ack *extack)
 {
-	struct dsa_port *dp = dsa_to_port(ds, port);
-	struct dsa_port *cpu_dp = dp->cpu_dp;
-
-	if (vlan_filtering) {
-		/* The port is being kept as VLAN-unaware port when bridge is
-		 * set up with vlan_filtering not being set, Otherwise, the
-		 * port and the corresponding CPU port is required the setup
-		 * for becoming a VLAN-aware port.
-		 */
+	/* The port will be VLAN-unaware when the bridge is not set up with with
+	 * vlan_filtering enabled. Otherwise, the port will be VLAN-aware. Both
+	 * the port and the affine CPU port will be configured in both cases.
+	 */
+	if (vlan_filtering)
 		mt7530_port_set_vlan_aware(ds, port);
-		mt7530_port_set_vlan_aware(ds, cpu_dp->index);
-	} else {
+	else
 		mt7530_port_set_vlan_unaware(ds, port);
-	}
 
 	return 0;
 }
