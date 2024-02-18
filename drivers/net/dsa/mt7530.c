@@ -1426,10 +1426,12 @@ mt7530_port_set_vlan_unaware(struct dsa_switch *ds, int port)
 		struct dsa_port *dp = dsa_to_port(ds, port);
 		struct dsa_port *cpu_dp = dp->cpu_dp;
 
-		mt7530_write(priv, MT7530_PCR_P(cpu_dp->index),
-			     PCR_MATRIX(dsa_user_ports(priv->ds)));
-		mt7530_write(priv, MT7530_PVC_P(cpu_dp->index), PORT_SPEC_TAG
-			     | PVC_EG_TAG(MT7530_VLAN_EG_CONSISTENT));
+		mt7530_rmw(priv, MT7530_PCR_P(cpu_dp->index),
+			   PCR_PORT_VLAN_MASK,
+			   PORT_VLAN(MT7530_PORT_MATRIX_MODE));
+
+		mt7530_rmw(priv, MT7530_PVC_P(cpu_dp->index), VLAN_ATTR_MASK,
+			   VLAN_ATTR(MT7530_VLAN_TRANSPARENT));
 	}
 }
 
