@@ -3,6 +3,7 @@
  * Mediatek MT7530 DSA Switch driver
  * Copyright (C) 2017 Sean Wang <sean.wang@mediatek.com>
  */
+#include <linux/debugfs.h>
 #include <linux/etherdevice.h>
 #include <linux/if_bridge.h>
 #include <linux/iopoll.h>
@@ -786,6 +787,88 @@ mt753x_phy_write_c45(struct mii_bus *bus, int port, int devad, int regnum,
 	struct mt7530_priv *priv = bus->priv;
 
 	return priv->info->phy_write_c45(priv, port, devad, regnum, val);
+}
+
+static u32 reg_address = 0;
+
+static ssize_t reg_address_read(struct file *filp, char __user *buffer,
+				size_t count, loff_t *ppos)
+{
+	char result[10];
+
+	snprintf(result, sizeof(result), "%08x\n", reg_address);
+
+	return simple_read_from_buffer(buffer, count, ppos, result,
+				       strlen(result));
+}
+
+static ssize_t reg_address_write(struct file *filp, const char __user *buffer,
+				 size_t count, loff_t *ppos)
+{
+	int ret;
+
+	ret = kstrtou32_from_user(buffer, count, 16, &reg_address);
+	if (ret)
+		return ret;
+
+	return count;
+}
+
+static ssize_t reg_value_read(struct file *filp, char __user *buffer,
+			      size_t count, loff_t *ppos)
+{
+	struct mt7530_priv *priv = filp->private_data;
+	char result[10];
+	u32 reg_value;
+
+	reg_value = mt7530_read(priv, reg_address);
+
+	snprintf(result, sizeof(result), "%08x\n", reg_value);
+
+	return simple_read_from_buffer(buffer, count, ppos, result,
+	                               strlen(result));
+}
+
+static ssize_t reg_value_write(struct file *filp, const char __user *buffer,
+			       size_t count, loff_t *ppos)
+{
+	struct mt7530_priv *priv = filp->private_data;
+	u32 reg_value;
+	int ret;
+
+	ret = kstrtou32_from_user(buffer, count, 16, &reg_value);
+	if (ret)
+		return ret;
+
+	mt7530_write(priv, reg_address, reg_value);
+
+	return count;
+}
+
+static const struct file_operations reg_address_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read = reg_address_read,
+	.write = reg_address_write,
+};
+
+static const struct file_operations reg_value_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.read = reg_value_read,
+	.write = reg_value_write,
+};
+
+static void mt7530_debugfs_init(struct mt7530_priv *priv)
+{
+	struct dentry *dir;
+
+	dir = debugfs_lookup("mt7530", 0);
+	if (dir == NULL)
+		dir = debugfs_create_dir("mt7530", 0);
+
+	debugfs_create_file("reg_address", 0644, dir, priv, &reg_address_fops);
+	debugfs_create_file("reg_value", 0644, dir, priv, &reg_value_fops);
 }
 
 static void
@@ -3059,9 +3142,13 @@ mt753x_setup(struct dsa_switch *ds)
 		ret = priv->create_sgmii(priv);
 		if (ret && priv->irq)
 			mt7530_free_irq(priv);
+		if (ret)
+			return ret;
 	}
 
-	return ret;
+	mt7530_debugfs_init(priv);
+
+	return 0;
 }
 
 static int mt753x_get_mac_eee(struct dsa_switch *ds, int port,
