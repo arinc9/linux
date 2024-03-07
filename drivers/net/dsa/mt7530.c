@@ -223,7 +223,7 @@ mt7530_mii_read(struct mt7530_priv *priv, u32 reg)
 	return val;
 }
 
-static void
+void
 mt7530_write(struct mt7530_priv *priv, u32 reg, u32 val)
 {
 	mt7530_mutex_lock(priv);
@@ -253,7 +253,7 @@ _mt7530_read(struct mt7530_dummy_poll *p)
 	return val;
 }
 
-static u32
+u32
 mt7530_read(struct mt7530_priv *priv, u32 reg)
 {
 	struct mt7530_dummy_poll p;
@@ -2877,7 +2877,12 @@ mt753x_setup(struct dsa_switch *ds)
 			mt7530_free_irq(priv);
 	}
 
-	return ret;
+	if (ret)
+		return ret;
+
+	mt7530_debugfs_init(priv);
+
+	return 0;
 }
 
 static int mt753x_get_mac_eee(struct dsa_switch *ds, int port,
