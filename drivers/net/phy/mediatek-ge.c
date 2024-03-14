@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0+
 #include <linux/bitfield.h>
+#include <linux/debugfs.h>
 #include <linux/module.h>
 #include <linux/phy.h>
 
@@ -10,6 +11,53 @@
 #define MTK_PHY_PAGE_EXTENDED_3		0x0003
 #define MTK_PHY_PAGE_EXTENDED_2A30	0x2a30
 #define MTK_PHY_PAGE_EXTENDED_52B5	0x52b5
+
+static int phy_number = 0;
+
+static ssize_t disable_eee_write(struct file *filp, const char __user *buffer,
+				 size_t count, loff_t *ppos)
+{
+	struct phy_device *phydev = filp->private_data;
+
+	phy_write_mmd(phydev, MDIO_MMD_AN, MDIO_AN_EEE_ADV, 0);
+
+	return count;
+}
+
+static const struct file_operations disable_eee_fops = {
+	.owner = THIS_MODULE,
+	.open = simple_open,
+	.write = disable_eee_write,
+};
+
+static void mtk_gephy_debugfs_init(struct phy_device *phydev)
+{
+	struct dentry *dir;
+
+	dir = debugfs_lookup("mt7530", 0);
+	if (dir == NULL)
+		dir = debugfs_create_dir("mt7530", 0);
+
+	if (phy_number == 0) {
+		debugfs_create_file("disable_eee0", 0644, dir, phydev,
+				    &disable_eee_fops);
+	} else if (phy_number == 1) {
+		debugfs_create_file("disable_eee1", 0644, dir, phydev,
+				    &disable_eee_fops);
+	} else if (phy_number == 2) {
+		debugfs_create_file("disable_eee2", 0644, dir, phydev,
+				    &disable_eee_fops);
+	} else if (phy_number == 3) {
+		debugfs_create_file("disable_eee3", 0644, dir, phydev,
+				    &disable_eee_fops);
+	} else if (phy_number == 4) {
+		debugfs_create_file("disable_eee4", 0644, dir, phydev,
+				    &disable_eee_fops);
+	}
+
+	if (phy_number < 4)
+		phy_number++;
+}
 
 static int mtk_gephy_read_page(struct phy_device *phydev)
 {
@@ -38,6 +86,8 @@ static void mtk_gephy_config_init(struct phy_device *phydev)
 
 	/* Disable mcc */
 	phy_write_mmd(phydev, MDIO_MMD_VEND1, 0xa6, 0x300);
+
+	mtk_gephy_debugfs_init(phydev);
 }
 
 static int mt7530_phy_config_init(struct phy_device *phydev)
