@@ -189,30 +189,29 @@ mt753x_phy_read_c22_indirect(struct mt7530_priv *priv, int port, int regnum)
 	int ret;
 	u32 val;
 
-	INIT_MT7530_DUMMY_POLL(&p, priv, MT7531_PHY_IAC);
+	INIT_MT7530_DUMMY_POLL(&p, priv, MT753X_PHY_IAC);
 
 	mt7530_mutex_lock(priv);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, val,
-				 !(val & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(val & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
 	}
 
-	val = MT7531_MDIO_CL22_READ | MT7531_MDIO_PHY_ADDR(port) |
-	      MT7531_MDIO_REG_ADDR(regnum);
+	val = MDIO_CL22_READ | MDIO_PHY_ADDR(port) | MDIO_REG_DEV_ADDR(regnum);
 
-	mt7530_mii_write(priv, MT7531_PHY_IAC, val | MT7531_PHY_ACS_ST);
+	mt7530_mii_write(priv, MT753X_PHY_IAC, val | PHY_ACS_ST);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, val,
-				 !(val & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(val & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
 	}
 
-	ret = val & MT7531_MDIO_RW_DATA_MASK;
+	ret = val & MDIO_RW_DATA_MASK;
 out:
 	mt7530_mutex_unlock(priv);
 
@@ -227,24 +226,24 @@ mt753x_phy_write_c22_indirect(struct mt7530_priv *priv, int port, int regnum,
 	int ret;
 	u32 reg;
 
-	INIT_MT7530_DUMMY_POLL(&p, priv, MT7531_PHY_IAC);
+	INIT_MT7530_DUMMY_POLL(&p, priv, MT753X_PHY_IAC);
 
 	mt7530_mutex_lock(priv);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, reg,
-				 !(reg & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(reg & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
 	}
 
-	reg = MT7531_MDIO_CL22_WRITE | MT7531_MDIO_PHY_ADDR(port) |
-	      MT7531_MDIO_REG_ADDR(regnum) | data;
+	reg = MDIO_CL22_WRITE | MDIO_PHY_ADDR(port) |
+	      MDIO_REG_DEV_ADDR(regnum) | data;
 
-	mt7530_mii_write(priv, MT7531_PHY_IAC, reg | MT7531_PHY_ACS_ST);
+	mt7530_mii_write(priv, MT753X_PHY_IAC, reg | PHY_ACS_ST);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, reg,
-				 !(reg & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(reg & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
@@ -264,40 +263,39 @@ mt753x_phy_read_c45_indirect(struct mt7530_priv *priv, int port, int devad,
 	u32 reg, val;
 	int ret;
 
-	INIT_MT7530_DUMMY_POLL(&p, priv, MT7531_PHY_IAC);
+	INIT_MT7530_DUMMY_POLL(&p, priv, MT753X_PHY_IAC);
 
 	mt7530_mutex_lock(priv);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, val,
-				 !(val & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(val & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
 	}
 
-	reg = MT7531_MDIO_CL45_ADDR | MT7531_MDIO_PHY_ADDR(port) |
-	      MT7531_MDIO_DEV_ADDR(devad) | regnum;
-	mt7530_mii_write(priv, MT7531_PHY_IAC, reg | MT7531_PHY_ACS_ST);
+	reg = MDIO_CL45_ADDR | MDIO_PHY_ADDR(port) | MDIO_REG_DEV_ADDR(devad) |
+	      regnum;
+	mt7530_mii_write(priv, MT753X_PHY_IAC, reg | PHY_ACS_ST);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, val,
-				 !(val & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(val & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
 	}
 
-	reg = MT7531_MDIO_CL45_READ | MT7531_MDIO_PHY_ADDR(port) |
-	      MT7531_MDIO_DEV_ADDR(devad);
-	mt7530_mii_write(priv, MT7531_PHY_IAC, reg | MT7531_PHY_ACS_ST);
+	reg = MDIO_CL45_READ | MDIO_PHY_ADDR(port) | MDIO_REG_DEV_ADDR(devad);
+	mt7530_mii_write(priv, MT753X_PHY_IAC, reg | PHY_ACS_ST);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, val,
-				 !(val & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(val & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
 	}
 
-	ret = val & MT7531_MDIO_RW_DATA_MASK;
+	ret = val & MDIO_RW_DATA_MASK;
 out:
 	mt7530_mutex_unlock(priv);
 
@@ -312,34 +310,34 @@ mt753x_phy_write_c45_indirect(struct mt7530_priv *priv, int port, int devad,
 	u32 val, reg;
 	int ret;
 
-	INIT_MT7530_DUMMY_POLL(&p, priv, MT7531_PHY_IAC);
+	INIT_MT7530_DUMMY_POLL(&p, priv, MT753X_PHY_IAC);
 
 	mt7530_mutex_lock(priv);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, val,
-				 !(val & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(val & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
 	}
 
-	reg = MT7531_MDIO_CL45_ADDR | MT7531_MDIO_PHY_ADDR(port) |
-	      MT7531_MDIO_DEV_ADDR(devad) | regnum;
-	mt7530_mii_write(priv, MT7531_PHY_IAC, reg | MT7531_PHY_ACS_ST);
+	reg = MDIO_CL45_ADDR | MDIO_PHY_ADDR(port) | MDIO_REG_DEV_ADDR(devad) |
+	      regnum;
+	mt7530_mii_write(priv, MT753X_PHY_IAC, reg | PHY_ACS_ST);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, val,
-				 !(val & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(val & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
 	}
 
-	reg = MT7531_MDIO_CL45_WRITE | MT7531_MDIO_PHY_ADDR(port) |
-	      MT7531_MDIO_DEV_ADDR(devad) | data;
-	mt7530_mii_write(priv, MT7531_PHY_IAC, reg | MT7531_PHY_ACS_ST);
+	reg = MDIO_CL45_WRITE | MDIO_PHY_ADDR(port) | MDIO_REG_DEV_ADDR(devad) |
+	      data;
+	mt7530_mii_write(priv, MT753X_PHY_IAC, reg | PHY_ACS_ST);
 
 	ret = readx_poll_timeout(_mt7530_unlocked_read, &p, val,
-				 !(val & MT7531_PHY_ACS_ST), 20, 100000);
+				 !(val & PHY_ACS_ST), 20, 100000);
 	if (ret < 0) {
 		dev_err(priv->dev, "poll timeout\n");
 		goto out;
