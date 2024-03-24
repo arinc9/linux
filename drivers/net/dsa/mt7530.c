@@ -1411,7 +1411,10 @@ mt7530_port_set_vlan_unaware(struct dsa_switch *ds, int port)
 	mt7530_rmw(priv, MT7530_PPBV1_P(port), G0_PORT_VID_MASK,
 		   G0_PORT_VID_DEF);
 
-	for (i = 0; i < priv->ds->num_ports; i++) {
+	for (i = 0; i < MT753X_NUM_PORTS(priv->id); i++) {
+		if (priv->id == ID_MT7988 && i == 4)
+			i = 6;
+
 		if (dsa_is_user_port(ds, i) &&
 		    dsa_port_is_vlan_filtering(dsa_to_port(ds, i))) {
 			all_user_ports_removed = false;
@@ -2048,7 +2051,7 @@ mt7530_irq_thread_fn(int irq, void *dev_id)
 	mt7530_mii_write(priv, MT7530_SYS_INT_STS, val);
 	mt7530_mutex_unlock(priv);
 
-	for (p = 0; p < MT7530_NUM_PHYS; p++) {
+	for (p = 0; p < MT753X_NUM_PHYS(priv->id); p++) {
 		if (BIT(p) & val) {
 			unsigned int irq;
 
@@ -2166,7 +2169,7 @@ mt7530_setup_mdio_irq(struct mt7530_priv *priv)
 	struct dsa_switch *ds = priv->ds;
 	int p;
 
-	for (p = 0; p < MT7530_NUM_PHYS; p++) {
+	for (p = 0; p < MT753X_NUM_PHYS(priv->id); p++) {
 		if (BIT(p) & ds->phys_mii_mask) {
 			unsigned int irq;
 
@@ -2194,14 +2197,15 @@ mt7530_setup_irq(struct mt7530_priv *priv)
 		return priv->irq ? : -EINVAL;
 	}
 
-	if (priv->id == ID_MT7988)
-		priv->irq_domain = irq_domain_add_linear(np, MT7530_NUM_PHYS,
-							 &mt7988_irq_domain_ops,
-							 priv);
-	else
-		priv->irq_domain = irq_domain_add_linear(np, MT7530_NUM_PHYS,
-							 &mt7530_irq_domain_ops,
-							 priv);
+	if (priv->id == ID_MT7988) {
+		priv->irq_domain =
+			irq_domain_add_linear(np, MT753X_NUM_PHYS(priv->id),
+					      &mt7988_irq_domain_ops, priv);
+	} else {
+		priv->irq_domain =
+			irq_domain_add_linear(np, MT753X_NUM_PHYS(priv->id),
+					      &mt7530_irq_domain_ops, priv);
+	}
 
 	if (!priv->irq_domain) {
 		dev_err(dev, "failed to create IRQ domain\n");
@@ -2228,7 +2232,7 @@ mt7530_free_mdio_irq(struct mt7530_priv *priv)
 {
 	int p;
 
-	for (p = 0; p < MT7530_NUM_PHYS; p++) {
+	for (p = 0; p < MT753X_NUM_PHYS(priv->id); p++) {
 		if (BIT(p) & priv->ds->phys_mii_mask) {
 			unsigned int irq;
 
@@ -2532,7 +2536,10 @@ mt7531_setup_common(struct dsa_switch *ds)
 	mt7530_clear(priv, MT753X_MFC, BC_FFP_MASK | UNM_FFP_MASK |
 		     UNU_FFP_MASK);
 
-	for (i = 0; i < priv->ds->num_ports; i++) {
+	for (i = 0; i < MT753X_NUM_PORTS(priv->id); i++) {
+		if (priv->id == ID_MT7988 && i == 4)
+			i = 6;
+
 		/* Clear link settings and enable force mode to force link down
 		 * on all ports until they're enabled later.
 		 */
@@ -2657,7 +2664,8 @@ mt7531_setup(struct dsa_switch *ds)
 
 	/* Disable EEE advertisement on the switch PHYs. */
 	for (i = MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr);
-	     i < MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr) + MT7530_NUM_PHYS;
+	     i < MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr) +
+			 MT753X_NUM_PHYS(priv->id);
 	     i++) {
 		mt7531_ind_c45_phy_write(priv, i, MDIO_MMD_AN, MDIO_AN_EEE_ADV,
 					 0);
@@ -3027,7 +3035,10 @@ mt753x_setup(struct dsa_switch *ds)
 		return ret;
 
 	/* Initialise the PCS devices */
-	for (i = 0; i < priv->ds->num_ports; i++) {
+	for (i = 0; i < MT753X_NUM_PORTS(priv->id); i++) {
+		if (priv->id == ID_MT7988 && i == 4)
+			i = 6;
+
 		priv->pcs[i].pcs.ops = priv->info->pcs_ops;
 		priv->pcs[i].pcs.neg_mode = true;
 		priv->pcs[i].priv = priv;
@@ -3219,7 +3230,7 @@ mt7530_probe_common(struct mt7530_priv *priv)
 		return -ENOMEM;
 
 	priv->ds->dev = dev;
-	priv->ds->num_ports = MT7530_NUM_PORTS;
+	priv->ds->num_ports = MT753X_MAX_NUM_PORTS;
 
 	/* Get the hardware identifier from the devicetree node.
 	 * We will need it for some of the clock and regulator setup.

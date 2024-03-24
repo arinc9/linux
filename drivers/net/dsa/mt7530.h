@@ -6,8 +6,9 @@
 #ifndef __MT7530_H
 #define __MT7530_H
 
-#define MT7530_NUM_PORTS		7
-#define MT7530_NUM_PHYS			5
+#define MT753X_MAX_NUM_PORTS		7
+#define MT753X_NUM_PORTS(id)		(id == ID_MT7988 ? 5 : 7)
+#define MT753X_NUM_PHYS(id)		(id == ID_MT7988 ? 4 : 5)
 #define MT7530_NUM_FDB_RECORDS		2048
 #define MT7530_ALL_MEMBERS		0xff
 
@@ -815,8 +816,8 @@ struct mt7530_priv {
 	bool			p5_sgmii;
 	u8			mirror_rx;
 	u8			mirror_tx;
-	struct mt7530_port	ports[MT7530_NUM_PORTS];
-	struct mt753x_pcs	pcs[MT7530_NUM_PORTS];
+	struct mt7530_port	ports[MT753X_MAX_NUM_PORTS];
+	struct mt753x_pcs	pcs[MT753X_MAX_NUM_PORTS];
 	/* protect among processes for registers access*/
 	struct mutex reg_mutex;
 	int irq;
