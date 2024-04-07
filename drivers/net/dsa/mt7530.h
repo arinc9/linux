@@ -111,6 +111,8 @@ enum mt753x_bpdu_port_fw {
 
 /* Register for address table write data */
 #define MT7530_ATWD			0x7c
+#define  ATWD_EG_TAG_MASK		GENMASK(15, 13)
+#define  ATWD_EG_TAG(x)			FIELD_PREP(ATWD_EG_TAG_MASK, x)
 
 /* Register for address table control */
 #define MT7530_ATC			0x80

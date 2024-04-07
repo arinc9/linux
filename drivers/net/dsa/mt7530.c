@@ -950,58 +950,6 @@ static void mt7530_setup_port5(struct dsa_switch *ds, phy_interface_t interface)
 	mutex_unlock(&priv->reg_mutex);
 }
 
-/* On page 205, section "8.6.3 Frame filtering" of the active standard, IEEE Std
- * 802.1Q™-2022, it is stated that frames with 01:80:C2:00:00:00-0F as MAC DA
- * must only be propagated to C-VLAN and MAC Bridge components. That means
- * VLAN-aware and VLAN-unaware bridges. On the switch designs with CPU ports,
- * these frames are supposed to be processed by the CPU (software). So we make
- * the switch only forward them to the CPU port. And if received from a CPU
- * port, forward to a single port. The software is responsible of making the
- * switch conform to the latter by setting a single port as destination port on
- * the special tag.
- *
- * This switch intellectual property cannot conform to this part of the standard
- * fully. Whilst the REV_UN frame tag covers the remaining :04-0D and :0F MAC
- * DAs, it also includes :22-FF which the scope of propagation is not supposed
- * to be restricted for these MAC DAs.
- */
-static void
-mt753x_trap_frames(struct mt7530_priv *priv)
-{
-	/* Trap 802.1X PAE frames and BPDUs to the CPU port(s) and egress them
-	 * VLAN-untagged.
-	 */
-	mt7530_rmw(priv, MT753X_BPC, MT753X_PAE_EG_TAG_MASK |
-		   MT753X_PAE_PORT_FW_MASK | MT753X_BPDU_EG_TAG_MASK |
-		   MT753X_BPDU_PORT_FW_MASK,
-		   MT753X_PAE_EG_TAG(MT7530_VLAN_EG_UNTAGGED) |
-		   MT753X_PAE_PORT_FW(MT753X_BPDU_CPU_ONLY) |
-		   MT753X_BPDU_EG_TAG(MT7530_VLAN_EG_UNTAGGED) |
-		   MT753X_BPDU_CPU_ONLY);
-
-	/* Trap frames with :01 and :02 MAC DAs to the CPU port(s) and egress
-	 * them VLAN-untagged.
-	 */
-	mt7530_rmw(priv, MT753X_RGAC1, MT753X_R02_EG_TAG_MASK |
-		   MT753X_R02_PORT_FW_MASK | MT753X_R01_EG_TAG_MASK |
-		   MT753X_R01_PORT_FW_MASK,
-		   MT753X_R02_EG_TAG(MT7530_VLAN_EG_UNTAGGED) |
-		   MT753X_R02_PORT_FW(MT753X_BPDU_CPU_ONLY) |
-		   MT753X_R01_EG_TAG(MT7530_VLAN_EG_UNTAGGED) |
-		   MT753X_BPDU_CPU_ONLY);
-
-	/* Trap frames with :03 and :0E MAC DAs to the CPU port(s) and egress
-	 * them VLAN-untagged.
-	 */
-	mt7530_rmw(priv, MT753X_RGAC2, MT753X_R0E_EG_TAG_MASK |
-		   MT753X_R0E_PORT_FW_MASK | MT753X_R03_EG_TAG_MASK |
-		   MT753X_R03_PORT_FW_MASK,
-		   MT753X_R0E_EG_TAG(MT7530_VLAN_EG_UNTAGGED) |
-		   MT753X_R0E_PORT_FW(MT753X_BPDU_CPU_ONLY) |
-		   MT753X_R03_EG_TAG(MT7530_VLAN_EG_UNTAGGED) |
-		   MT753X_BPDU_CPU_ONLY);
-}
-
 static void
 mt753x_cpu_port_enable(struct dsa_switch *ds, int port)
 {
@@ -1014,13 +962,6 @@ mt753x_cpu_port_enable(struct dsa_switch *ds, int port)
 	/* Enable flooding on the CPU port */
 	mt7530_set(priv, MT7530_MFC, BC_FFP(BIT(port)) | UNM_FFP(BIT(port)) |
 		   UNU_FFP(BIT(port)));
-
-	/* Add the CPU port to the CPU port bitmap for MT7531 and the switch on
-	 * the MT7988 SoC. Trapped frames will be forwarded to the CPU port that
-	 * is affine to the inbound user port.
-	 */
-	if (priv->id == ID_MT7531 || priv->id == ID_MT7988)
-		mt7530_set(priv, MT7531_CFC, MT7531_CPU_PMAP(BIT(port)));
 
 	/* CPU port gets connected to all user ports of
 	 * the switch.
@@ -2305,8 +2246,6 @@ mt7530_setup(struct dsa_switch *ds)
 	if ((val & HWTRAP_XTAL_MASK) == HWTRAP_XTAL_40MHZ)
 		mt7530_pll_setup(priv);
 
-	mt753x_trap_frames(priv);
-
 	/* Enable and reset MIB counters */
 	mt7530_mib_reset(ds);
 
@@ -2408,8 +2347,6 @@ mt7531_setup_common(struct dsa_switch *ds)
 {
 	struct mt7530_priv *priv = ds->priv;
 	int ret, i;
-
-	mt753x_trap_frames(priv);
 
 	/* Enable and reset MIB counters */
 	mt7530_mib_reset(ds);
@@ -2941,27 +2878,61 @@ mt753x_conduit_state_change(struct dsa_switch *ds,
 {
 	struct dsa_port *cpu_dp = conduit->dsa_ptr;
 	struct mt7530_priv *priv = ds->priv;
-	int val = 0;
-	u8 mask;
+	u8 mask = BIT(cpu_dp->index);
+	unsigned char mac[16][6];
+	int i;
 
-	/* Set the CPU port to trap frames to for MT7530. Trapped frames will be
-	 * forwarded to the numerically smallest CPU port whose conduit
-	 * interface is up.
-	 */
-	if (priv->id != ID_MT7530 && priv->id != ID_MT7621)
-		return;
+	for (i = 0x00; i <= 0x0f; i++) {
+		mac[i][0] = 0x01;
+		mac[i][1] = 0x80;
+		mac[i][2] = 0xc2;
+		mac[i][3] = 0x00;
+		mac[i][4] = 0x00;
+		mac[i][5] = i;
+	}
 
-	mask = BIT(cpu_dp->index);
+	mutex_lock(&priv->reg_mutex);
+
+	if (priv->active_cpu_ports) {
+		for (i = 0x00; i <= 0x0f; i++) {
+			mt7530_fdb_write(priv, 0, priv->active_cpu_ports,
+					 mac[i], -1, STATIC_EMP);
+
+			mt7530_fdb_cmd(priv, MT7530_FDB_WRITE, NULL);
+
+			mt7530_fdb_write(priv, 1, priv->active_cpu_ports,
+					 mac[i], -1, STATIC_EMP);
+
+			mt7530_fdb_cmd(priv, MT7530_FDB_WRITE, NULL);
+		}
+	}
 
 	if (operational)
 		priv->active_cpu_ports |= mask;
 	else
 		priv->active_cpu_ports &= ~mask;
 
-	if (priv->active_cpu_ports)
-		val = CPU_EN | CPU_PORT(__ffs(priv->active_cpu_ports));
+	if (priv->active_cpu_ports) {
+		for (i = 0x00; i <= 0x0f; i++) {
+			mt7530_fdb_write(priv, 0, priv->active_cpu_ports,
+					 mac[i], -1, STATIC_ENT);
 
-	mt7530_rmw(priv, MT7530_MFC, CPU_EN | CPU_PORT_MASK, val);
+			mt7530_set(priv, MT7530_ATWD,
+				   ATWD_EG_TAG(MT7530_VLAN_EG_UNTAGGED));
+
+			mt7530_fdb_cmd(priv, MT7530_FDB_WRITE, NULL);
+
+			mt7530_fdb_write(priv, 1, priv->active_cpu_ports,
+					 mac[i], -1, STATIC_ENT);
+
+			mt7530_set(priv, MT7530_ATWD,
+				   ATWD_EG_TAG(MT7530_VLAN_EG_UNTAGGED));
+
+			mt7530_fdb_cmd(priv, MT7530_FDB_WRITE, NULL);
+		}
+	}
+
+	mutex_unlock(&priv->reg_mutex);
 }
 
 static int mt7988_setup(struct dsa_switch *ds)
