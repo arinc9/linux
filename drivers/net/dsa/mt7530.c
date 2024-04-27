@@ -1136,7 +1136,7 @@ mt753x_trap_frames(struct mt7530_priv *priv)
 }
 
 static void
-mt753x_cpu_port_enable(struct dsa_switch *ds, int port)
+mt753x_cpu_port_setup(struct dsa_switch *ds, int port)
 {
 	struct mt7530_priv *priv = ds->priv;
 
@@ -2440,14 +2440,13 @@ mt7530_setup(struct dsa_switch *ds)
 		mt7530_set(priv, MT7530_PSC_P(i), SA_DIS);
 
 		if (dsa_is_cpu_port(ds, i)) {
-			mt753x_cpu_port_enable(ds, i);
+			mt753x_cpu_port_setup(ds, i);
 		} else {
-			mt7530_port_disable(ds, i);
-
 			/* Set default PVID to 0 on all user ports */
 			mt7530_rmw(priv, MT7530_PPBV1_P(i), G0_PORT_VID_MASK,
 				   G0_PORT_VID_DEF);
 		}
+
 		/* Enable consistent egress tag */
 		mt7530_rmw(priv, MT7530_PVC_P(i), PVC_EG_TAG_MASK,
 			   PVC_EG_TAG(MT7530_VLAN_EG_CONSISTENT));
@@ -2556,10 +2555,8 @@ mt7531_setup_common(struct dsa_switch *ds)
 		mt7530_set(priv, MT7531_DBG_CNT(i), MT7531_DIS_CLR);
 
 		if (dsa_is_cpu_port(ds, i)) {
-			mt753x_cpu_port_enable(ds, i);
+			mt753x_cpu_port_setup(ds, i);
 		} else {
-			mt7530_port_disable(ds, i);
-
 			/* Set default PVID to 0 on all user ports */
 			mt7530_rmw(priv, MT7530_PPBV1_P(i), G0_PORT_VID_MASK,
 				   G0_PORT_VID_DEF);
