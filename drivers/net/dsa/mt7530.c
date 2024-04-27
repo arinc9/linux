@@ -1141,23 +1141,13 @@ mt753x_cpu_port_setup(struct dsa_switch *ds, int port)
 	struct mt7530_priv *priv = ds->priv;
 
 	/* Enable Mediatek header mode on the cpu port */
-	mt7530_write(priv, MT7530_PVC_P(port),
-		     PORT_SPEC_TAG);
+	mt7530_write(priv, MT7530_PVC_P(port), PORT_SPEC_TAG);
 
 	/* Enable flooding on the CPU port */
 	mt7530_set(priv, MT753X_MFC, BC_FFP(BIT(port)) | UNM_FFP(BIT(port)) |
 		   UNU_FFP(BIT(port)));
 
-	/* Add the CPU port to the CPU port bitmap for MT7531 and the switch on
-	 * the MT7988 SoC. Trapped frames will be forwarded to the CPU port that
-	 * is affine to the inbound user port.
-	 */
-	if (priv->id == ID_MT7531 || priv->id == ID_MT7988)
-		mt7530_set(priv, MT7531_CFC, MT7531_CPU_PMAP(BIT(port)));
-
-	/* CPU port gets connected to all user ports of
-	 * the switch.
-	 */
+	/* CPU port gets connected to all user ports of the switch. */
 	mt7530_write(priv, MT7530_PCR_P(port),
 		     PCR_MATRIX(dsa_user_ports(priv->ds)));
 
@@ -2556,6 +2546,12 @@ mt7531_setup_common(struct dsa_switch *ds)
 
 		if (dsa_is_cpu_port(ds, i)) {
 			mt753x_cpu_port_setup(ds, i);
+
+			/* Add the CPU port to the CPU port bitmap. Trapped
+			 * frames will be forwarded to the CPU port that is
+			 * affine to the inbound user port.
+			 */
+			mt7530_set(priv, MT7531_CFC, MT7531_CPU_PMAP(BIT(i)));
 		} else {
 			/* Set default PVID to 0 on all user ports */
 			mt7530_rmw(priv, MT7530_PPBV1_P(i), G0_PORT_VID_MASK,
