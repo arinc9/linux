@@ -356,32 +356,9 @@ core_write(struct mt7530_priv *priv, u32 reg, u32 val)
 {
 	int ret;
 
-	/* Write the desired MMD Devad */
-	ret = mt753x_phy_write_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_CTRL,
-		MDIO_MMD_VEND2);
-	if (ret < 0)
-		goto err;
-
-	/* Write the desired MMD register address */
-	ret = mt753x_phy_write_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_DATA,
-		reg);
-	if (ret < 0)
-		goto err;
-
-	/* Select the Function : DATA with no post increment */
-	ret = mt753x_phy_write_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_CTRL,
-		MDIO_MMD_VEND2 | MII_MMD_CTRL_NOINCR);
-	if (ret < 0)
-		goto err;
-
-	/* Write the data into MMD's selected register */
-	ret = mt753x_phy_write_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_DATA,
-		val);
-err:
+	ret = mt753x_phy_write_c45_indirect(
+		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MDIO_MMD_VEND2,
+		reg, val);
 	if (ret < 0)
 		dev_err(priv->dev, "failed to write mmd register\n");
 }
@@ -392,37 +369,14 @@ core_rmw(struct mt7530_priv *priv, u32 reg, u32 mask, u32 set)
 	u32 val;
 	int ret;
 
-	/* Write the desired MMD Devad */
-	ret = mt753x_phy_write_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_CTRL,
-		MDIO_MMD_VEND2);
-	if (ret < 0)
-		goto err;
-
-	/* Write the desired MMD register address */
-	ret = mt753x_phy_write_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_DATA,
+	val = mt753x_phy_read_c45_indirect(
+		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MDIO_MMD_VEND2,
 		reg);
-	if (ret < 0)
-		goto err;
-
-	/* Select the Function : DATA with no post increment */
-	ret = mt753x_phy_write_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_CTRL,
-		MDIO_MMD_VEND2 | MII_MMD_CTRL_NOINCR);
-	if (ret < 0)
-		goto err;
-
-	/* Read the content of the MMD's selected register */
-	val = mt753x_phy_read_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_DATA);
 	val &= ~mask;
 	val |= set;
-	/* Write the data into MMD's selected register */
-	ret = mt753x_phy_write_c22_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MII_MMD_DATA,
-		val);
-err:
+	ret = mt753x_phy_write_c45_indirect(
+		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MDIO_MMD_VEND2,
+		reg, val);
 	if (ret < 0)
 		dev_err(priv->dev, "failed to write mmd register\n");
 }
