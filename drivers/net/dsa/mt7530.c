@@ -2654,19 +2654,11 @@ mt7531_setup(struct dsa_switch *ds)
 	mt7530_rmw(priv, MT7531_GPIO_MODE0, MT7531_GPIO0_MASK,
 		   MT7531_GPIO0_INTERRUPT);
 
-	/* Enable Energy-Efficient Ethernet (EEE) and PHY core PLL, since
-	 * phy_device has not yet been created provided for
-	 * phy_[read,write]_mmd_indirect is called, we provide our own
-	 * mt7531_ind_mmd_phy_[read,write] to complete this function.
-	 */
-	val = mt753x_phy_read_c45_indirect(
-		priv, MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr), MDIO_MMD_VEND2,
-		CORE_PLL_GROUP4);
-	val |= MT7531_RG_SYSPLL_DMY2 | MT7531_PHY_PLL_BYPASS_MODE;
-	val &= ~MT7531_PHY_PLL_OFF;
-	mt753x_phy_write_c45_indirect(priv,
-				      MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr),
-				      MDIO_MMD_VEND2, CORE_PLL_GROUP4, val);
+	/* Enable Energy-Efficient Ethernet (EEE) and PHY core PLL. */
+	core_rmw(priv, CORE_PLL_GROUP4,
+		 MT7531_RG_SYSPLL_DMY2 | MT7531_PHY_PLL_BYPASS_MODE |
+			 MT7531_PHY_PLL_OFF,
+		 MT7531_RG_SYSPLL_DMY2 | MT7531_PHY_PLL_BYPASS_MODE);
 
 	/* Disable EEE advertisement on the switch PHYs. */
 	for (i = MT753X_CTRL_PHY_ADDR(priv->mdiodev->addr);
