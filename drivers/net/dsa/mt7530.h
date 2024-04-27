@@ -746,10 +746,6 @@ struct mt753x_pcs {
  * @id:			Holding the identifier to a switch model
  * @pcs_ops:		Holding the pointer to the MAC PCS operations structure
  * @sw_setup:		Holding the handler to a device initialization
- * @phy_read_c22:	Holding the way reading PHY port using C22
- * @phy_write_c22:	Holding the way writing PHY port using C22
- * @phy_read_c45:	Holding the way reading PHY port using C45
- * @phy_write_c45:	Holding the way writing PHY port using C45
  * @mac_port_get_caps:	Holding the handler that provides MAC capabilities
  * @mac_port_config:	Holding the way setting up the PHY attribute to a
  *			certain MAC port
@@ -760,13 +756,6 @@ struct mt753x_info {
 	const struct phylink_pcs_ops *pcs_ops;
 
 	int (*sw_setup)(struct dsa_switch *ds);
-	int (*phy_read_c22)(struct mt7530_priv *priv, int port, int regnum);
-	int (*phy_write_c22)(struct mt7530_priv *priv, int port, int regnum,
-			     u16 val);
-	int (*phy_read_c45)(struct mt7530_priv *priv, int port, int devad,
-			    int regnum);
-	int (*phy_write_c45)(struct mt7530_priv *priv, int port, int devad,
-			     int regnum, u16 val);
 	void (*mac_port_get_caps)(struct dsa_switch *ds, int port,
 				  struct phylink_config *config);
 	void (*mac_port_config)(struct dsa_switch *ds, int port,
