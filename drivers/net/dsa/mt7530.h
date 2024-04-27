@@ -389,7 +389,6 @@ enum mt7530_vlan_port_acc_frm {
 
 /* Register for port debug count */
 #define MT7531_DBG_CNT(x)		(0x3018 + (x) * 0x100)
-#define  MT7531_DIS_CLR			BIT(31)
 
 #define MT7530_GMACCR			0x30e0
 #define  MAX_RX_JUMBO(x)		((x) << 2)

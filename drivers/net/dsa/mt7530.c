@@ -2542,8 +2542,6 @@ mt7531_setup_common(struct dsa_switch *ds)
 		/* Disable learning by default on all ports */
 		mt7530_set(priv, MT7530_PSC_P(i), SA_DIS);
 
-		mt7530_set(priv, MT7531_DBG_CNT(i), MT7531_DIS_CLR);
-
 		if (dsa_is_cpu_port(ds, i)) {
 			mt753x_cpu_port_setup(ds, i);
 
