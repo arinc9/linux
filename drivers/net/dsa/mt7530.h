@@ -522,8 +522,9 @@ enum mt7531_xtal_fsel {
 };
 
 /* Register for TOP signal control */
-#define MT7530_TOP_SIG_CTRL		0x7808
+#define MT753X_TOP_SIG_CTRL		0x7808
 #define  TOP_SIG_CTRL_NORMAL		(BIT(17) | BIT(16))
+#define  MT7531_CHIP_SMI_ADDR_MASK	GENMASK(6, 2)
 
 #define MT7531_TOP_SIG_SR		0x780c
 #define  PAD_DUAL_SGMII_EN		BIT(1)
