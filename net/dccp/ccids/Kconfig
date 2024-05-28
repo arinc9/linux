@@ -52,4 +52,53 @@ config IP_DCCP_TFRC_LIB
 
 config IP_DCCP_TFRC_DEBUG
 	def_bool y if IP_DCCP_CCID3_DEBUG
+
+config IP_DCCP_CCID5
+	bool "CCID 5 (BBR-Like)"
+	def_bool y if (IP_DCCP = y || IP_DCCP = m)
+	help
+	  CCID 5 - BBR implementation for DCCP.
+config IP_DCCP_CCID5_DEBUG
+	bool "CCID-5 debugging messages"
+	depends on IP_DCCP_CCID5
+	help
+	  Enable CCID-5 specific debugging messages.
+
+	  The debugging output can additionally be toggled by setting the
+	  ccid5_debug parameter to 0 or 1.
+
+	  If in doubt, say N.
+
+config IP_DCCP_CCID6
+	bool "CCID 6 (Cubic)"
+	def_bool y if (IP_DCCP = y || IP_DCCP = m)
+	help
+	  CCID 6 - BBRv2 implementation for DCCP.
+config IP_DCCP_CCID6_DEBUG
+	bool "CCID-6 debugging messages"
+	depends on IP_DCCP_CCID6
+	help
+	  Enable CCID-6 specific debugging messages.
+
+	  The debugging output can additionally be toggled by setting the
+	  ccid6_debug parameter to 0 or 1.
+
+	  If in doubt, say N.
+
+config IP_DCCP_CCID7
+	bool "CCID 7 (Cubic)"
+	def_bool y if (IP_DCCP = y || IP_DCCP = m)
+	help
+	  CCID 7 - Cubic implementation for DCCP.
+config IP_DCCP_CCID7_DEBUG
+	bool "CCID-7 debugging messages"
+	depends on IP_DCCP_CCID7
+	help
+	  Enable CCID-7 specific debugging messages.
+
+	  The debugging output can additionally be toggled by setting the
+	  ccid7_debug parameter to 0 or 1.
+
+	  If in doubt, say N.
+
 endmenu

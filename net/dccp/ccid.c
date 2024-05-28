@@ -18,7 +18,19 @@ static struct ccid_operations *ccids[] = {
 #ifdef CONFIG_IP_DCCP_CCID3
 	&ccid3_ops,
 #endif
+#ifdef CONFIG_IP_DCCP_CCID5
+	&ccid5_ops,
+#endif
+#ifdef CONFIG_IP_DCCP_CCID6
+	&ccid6_ops,
+#endif
+#ifdef CONFIG_IP_DCCP_CCID7
+	&ccid7_ops,
+#endif
 };
+
+u32 (*get_delay_valn)(struct sock *sk, struct tcp_info *info, u8 *type) = mrtt_as_delayn;
+EXPORT_SYMBOL_GPL(get_delay_valn);
 
 static struct ccid_operations *ccid_by_number(const u8 id)
 {
@@ -180,7 +192,7 @@ void ccid_hc_rx_delete(struct ccid *ccid, struct sock *sk)
 }
 
 void ccid_hc_tx_delete(struct ccid *ccid, struct sock *sk)
-{
+{	
 	if (ccid != NULL) {
 		if (ccid->ccid_ops->ccid_hc_tx_exit != NULL)
 			ccid->ccid_ops->ccid_hc_tx_exit(sk);
