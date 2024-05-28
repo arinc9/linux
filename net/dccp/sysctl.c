@@ -83,6 +83,29 @@ static struct ctl_table dccp_default_table[] = {
 		.proc_handler	= proc_dointvec_minmax,
 		.extra1		= SYSCTL_ZERO,
 	},
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	{
+		.procname	= "dccp_keepalive_enable",
+		.data		= &sysctl_dccp_keepalive_enable,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec,
+	},
+	{
+		.procname	= "dccp_keepalive_snd_intvl",
+		.data		= &sysctl_dccp_keepalive_snd_intvl,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_jiffies,
+	},
+	{
+		.procname	= "dccp_keepalive_rcv_intvl",
+		.data		= &sysctl_dccp_keepalive_rcv_intvl,
+		.maxlen		= sizeof(int),
+		.mode		= 0644,
+		.proc_handler	= proc_dointvec_jiffies,
+	},
+#endif
 	{
 		.procname	= "sync_ratelimit",
 		.data		= &sysctl_dccp_sync_ratelimit,

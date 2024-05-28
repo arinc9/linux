@@ -21,6 +21,9 @@
 #include <linux/slab.h>
 #include "ccid.h"
 #include "feat.h"
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+#include "mpdccp.h"
+#endif
 
 /* feature-specific sysctls - initialised to the defaults from RFC 4340, 6.4 */
 unsigned long	sysctl_dccp_sequence_window __read_mostly = 100;
@@ -147,6 +150,7 @@ static const struct {
  *  | DCCPF_MIN_CSUM_COVER     | X  |     | X  |    |   0     |  9.2.1    |
  *  | DCCPF_DATA_CHECKSUM      | X  |     | X  |    |   0     |  9.3.1    |
  *  | DCCPF_SEND_LEV_RATE      | X  |     | X  |    |   0     | 4342/8.4  |
+ *  | DCCPF_MULTIPATH          |    |  X  |    | X  |   1     | non-std   |
  *  +--------------------------+----+-----+----+----+---------+-----------+
  */
 } dccp_feat_table[] = {
@@ -160,6 +164,7 @@ static const struct {
 	{ DCCPF_MIN_CSUM_COVER,  FEAT_AT_RX, FEAT_SP, 0,   dccp_hdlr_min_cscov},
 	{ DCCPF_DATA_CHECKSUM,	 FEAT_AT_RX, FEAT_SP, 0,   NULL },
 	{ DCCPF_SEND_LEV_RATE,	 FEAT_AT_RX, FEAT_SP, 0,   NULL },
+	{ DCCPF_MULTIPATH,	 FEAT_AT_TX, FEAT_SP, MPDCCP_VERS_UNDEFINED << 4, NULL },
 };
 #define DCCP_FEAT_SUPPORTED_MAX		ARRAY_SIZE(dccp_feat_table)
 
@@ -172,7 +177,7 @@ static const struct {
 static int dccp_feat_index(u8 feat_num)
 {
 	/* The first 9 entries are occupied by the types from RFC 4340, 6.4 */
-	if (feat_num > DCCPF_RESERVED && feat_num <= DCCPF_DATA_CHECKSUM)
+	if (feat_num > DCCPF_RESERVED && feat_num <= DCCPF_MULTIPATH)
 		return feat_num - 1;
 
 	/*
@@ -223,8 +228,9 @@ static const char *dccp_feat_fname(const u8 feat)
 		[DCCPF_SEND_NDP_COUNT]	= "Send NDP Count",
 		[DCCPF_MIN_CSUM_COVER]	= "Min. Csum Coverage",
 		[DCCPF_DATA_CHECKSUM]	= "Send Data Checksum",
+		[DCCPF_MULTIPATH]	= "MPDCCP Capable",
 	};
-	if (feat > DCCPF_DATA_CHECKSUM && feat < DCCPF_MIN_CCID_SPECIFIC)
+	if (feat > DCCPF_MULTIPATH && feat < DCCPF_MIN_CCID_SPECIFIC)
 		return feature_names[DCCPF_RESERVED];
 
 	if (feat ==  DCCPF_SEND_LEV_RATE)
@@ -599,7 +605,7 @@ static u8 dccp_feat_is_valid_sp_val(u8 feat_num, u8 val)
 {
 	switch (feat_num) {
 	case DCCPF_CCID:
-		return val == DCCPC_CCID2 || val == DCCPC_CCID3;
+		return (val == DCCPC_CCID2 || val == DCCPC_CCID3 || val == DCCPC_CCID5 || val == DCCPC_CCID6 || val == DCCPC_CCID7);
 	/* Type-check Boolean feature values: */
 	case DCCPF_SHORT_SEQNOS:
 	case DCCPF_ECN_INCAPABLE:
@@ -610,6 +616,8 @@ static u8 dccp_feat_is_valid_sp_val(u8 feat_num, u8 val)
 		return val < 2;
 	case DCCPF_MIN_CSUM_COVER:
 		return val < 16;
+	case DCCPF_MULTIPATH:
+		return ((val >> 4) < MPDCCP_VERS_MAX);
 	}
 	return 0;			/* feature unknown */
 }
@@ -635,7 +643,7 @@ int dccp_feat_insert_opts(struct dccp_sock *dp, struct dccp_request_sock *dreq,
 {
 	struct list_head *fn = dreq ? &dreq->dreq_featneg : &dp->dccps_featneg;
 	struct dccp_feat_entry *pos, *next;
-	u8 opt, type, len, *ptr, nn_in_nbo[DCCP_OPTVAL_MAXLEN];
+	u8 opt, type, len, *ptr, nn_in_nbo[8*DCCP_OPTVAL_MAXLEN];
 	bool rpt;
 
 	/* put entries into @skb in the order they appear in the list */
@@ -661,13 +669,14 @@ int dccp_feat_insert_opts(struct dccp_sock *dp, struct dccp_request_sock *dreq,
 				return -1;
 			}
 		}
+
 		dccp_feat_print_opt(opt, pos->feat_num, ptr, len, 0);
 
 		if (dccp_insert_fn_opt(skb, opt, pos->feat_num, ptr, len, rpt))
 			return -1;
+
 		if (pos->needs_mandatory && dccp_insert_option_mandatory(skb))
 			return -1;
-
 		if (skb->sk->sk_state == DCCP_OPEN &&
 		    (opt == DCCPO_CONFIRM_R || opt == DCCPO_CONFIRM_L)) {
 			/*
@@ -763,6 +772,7 @@ int dccp_feat_register_sp(struct sock *sk, u8 feat, u8 is_local,
 	return __feat_register_sp(&dccp_sk(sk)->dccps_featneg, feat, is_local,
 				  0, list, len);
 }
+EXPORT_SYMBOL_GPL(dccp_feat_register_sp);
 
 /**
  * dccp_feat_nn_get  -  Query current/pending value of NN feature
@@ -930,6 +940,12 @@ static const struct ccid_dependency *dccp_feat_ccid_deps(u8 ccid, bool is_local)
 		return ccid2_dependencies[is_local];
 	case DCCPC_CCID3:
 		return ccid3_dependencies[is_local];
+	case DCCPC_CCID5:
+		return ccid2_dependencies[is_local];
+	case DCCPC_CCID6:
+		return ccid2_dependencies[is_local];
+	case DCCPC_CCID7:
+		return ccid2_dependencies[is_local];
 	default:
 		return NULL;
 	}
@@ -987,9 +1003,10 @@ int dccp_feat_finalise_settings(struct dccp_sock *dp)
 	list_for_each_entry(entry, fn, node)
 		if (entry->feat_num == DCCPF_CCID && entry->val.sp.len == 1)
 			ccids[entry->is_local] = entry->val.sp.vec[0];
-	while (i--)
+	while (i--){
 		if (ccids[i] > 0 && dccp_feat_propagate_ccid(fn, ccids[i], i))
 			return -1;
+	}
 	dccp_feat_print_fnlist(fn);
 	return 0;
 }
@@ -1004,7 +1021,6 @@ int dccp_feat_server_ccid_dependencies(struct dccp_request_sock *dreq)
 	struct list_head *fn = &dreq->dreq_featneg;
 	struct dccp_feat_entry *entry;
 	u8 is_local, ccid;
-
 	for (is_local = 0; is_local <= 1; is_local++) {
 		entry = dccp_feat_list_lookup(fn, DCCPF_CCID, is_local);
 
@@ -1288,6 +1304,46 @@ confirmation_failed:
 			    : DCCP_RESET_CODE_OPTION_ERROR;
 }
 
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+static u8 dccp_mpcap_change_recv(struct dccp_request_sock *dreq, struct list_head *fn,
+									u8 opt, u8 *val, u8 len)
+{
+	u8 ret;
+	ret = dccp_feat_change_recv(fn, 0, opt, DCCPF_MULTIPATH , val, len, 1);
+	if (dreq) {
+		if (!ret) {
+			struct dccp_feat_entry *entry = dccp_feat_list_lookup(fn, DCCPF_MULTIPATH, 1);
+			if (entry && entry->val.sp.len) {
+				dreq->multipath_ver = entry->val.sp.vec[0] >> 4;
+				dccp_pr_debug("success MP version reconciliation with client: %d\n", dreq->multipath_ver);
+			}
+		} else if (ret == DCCP_RESET_CODE_OPTION_ERROR) {
+			dccp_pr_debug("failed MP version reconciliation with client, send empty confirmation\n");
+			ret = dccp_push_empty_confirm(fn, DCCPF_MULTIPATH, 1);
+		}
+	}
+	return ret;
+}
+
+static u8 dccp_mpcap_confirm_recv(struct sock *sk, struct list_head *fn,
+									u8 opt, u8 *val, u8 len)
+{
+
+	u8 ret;
+	ret = dccp_feat_confirm_recv(fn, 0, opt, DCCPF_MULTIPATH, val , len, 0);
+	if (!ret) {
+			struct dccp_feat_entry *entry = dccp_feat_list_lookup(fn, DCCPF_MULTIPATH, 0);
+			if (entry && entry->val.sp.len) {
+				dccp_sk(sk)->multipath_ver = entry->val.sp.vec[0] >> 4;
+				dccp_pr_debug("confirmed MP version with server: %d\n", dccp_sk(sk)->multipath_ver);
+			} else {
+				dccp_pr_debug("failed MP version negotiation with server\n");
+			}
+	}
+	return ret;
+}
+#endif
+
 /**
  * dccp_feat_handle_nn_established  -  Fast-path reception of NN options
  * @sk:		socket of an established DCCP connection
@@ -1413,12 +1469,24 @@ int dccp_feat_parse_options(struct sock *sk, struct dccp_request_sock *dreq,
 		switch (opt) {
 		case DCCPO_CHANGE_L:
 		case DCCPO_CHANGE_R:
-			return dccp_feat_change_recv(fn, mandatory, opt, feat,
-						     val, len, server);
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+			if (is_mpdccp(sk) && server && (feat == DCCPF_MULTIPATH))
+				return dccp_mpcap_change_recv(dreq, fn, opt, val, len);
+			else if(!is_mpdccp(sk) && server && (feat == DCCPF_MULTIPATH))
+				dccp_push_empty_confirm(fn, DCCPF_MULTIPATH, 1);
+			else
+#endif
+				return dccp_feat_change_recv(fn, mandatory, opt, feat,
+										     val, len, server);
 		case DCCPO_CONFIRM_R:
 		case DCCPO_CONFIRM_L:
-			return dccp_feat_confirm_recv(fn, mandatory, opt, feat,
-						      val, len, server);
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+			if (is_mpdccp(sk) && !server && (feat == DCCPF_MULTIPATH))
+				return dccp_mpcap_confirm_recv(sk, fn, opt, val, len);
+			else
+#endif
+				return dccp_feat_confirm_recv(fn, mandatory, opt, feat,
+										      val, len, server);
 		}
 		break;
 	/*
@@ -1569,3 +1637,4 @@ activation_failed:
 	dp->dccps_hc_rx_ackvec = NULL;
 	return -1;
 }
+EXPORT_SYMBOL(dccp_feat_activate_values);

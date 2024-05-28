@@ -60,6 +60,29 @@ static bool qpolicy_prio_full(struct sock *sk)
 	return false;
 }
 
+static bool qpolicy_drop_oldest_full(struct sock *sk)
+{
+	if (qpolicy_simple_full(sk))
+		dccp_qpolicy_drop(sk, qpolicy_simple_top(sk));
+	return false;
+}
+
+static bool qpolicy_drop_newest_full(struct sock *sk)
+{
+	return false;
+}
+
+static void qpolicy_drop_newest_push(struct sock *sk, struct sk_buff *skb)
+{
+	if (qpolicy_simple_full(sk)) {
+		/* drop packet - do not use dccp_qpolicy_drop here - packet is not yet linked */
+		kfree_skb(skb);
+	} else {
+		qpolicy_simple_push(sk, skb);
+	}
+}
+
+
 /**
  * struct dccp_qpolicy_operations  -  TX Packet Dequeueing Interface
  * @push: add a new @skb to the write queue
@@ -85,6 +108,18 @@ static struct dccp_qpolicy_operations {
 		.top    = qpolicy_prio_best_skb,
 		.params = DCCP_SCM_PRIORITY,
 	},
+	[DCCPQ_POLICY_DROP_OLDEST] = {
+		.push	= qpolicy_simple_push,
+		.full	= qpolicy_drop_oldest_full,
+		.top	= qpolicy_simple_top,
+		.params = 0,
+	},
+	[DCCPQ_POLICY_DROP_NEWEST] = {
+		.push	= qpolicy_drop_newest_push,
+		.full	= qpolicy_drop_newest_full,
+		.top	= qpolicy_simple_top,
+		.params = 0,
+	},
 };
 
 /*
@@ -94,11 +129,13 @@ void dccp_qpolicy_push(struct sock *sk, struct sk_buff *skb)
 {
 	qpol_table[dccp_sk(sk)->dccps_qpolicy].push(sk, skb);
 }
+EXPORT_SYMBOL_GPL(dccp_qpolicy_push);
 
 bool dccp_qpolicy_full(struct sock *sk)
 {
 	return qpol_table[dccp_sk(sk)->dccps_qpolicy].full(sk);
 }
+EXPORT_SYMBOL_GPL(dccp_qpolicy_full);
 
 void dccp_qpolicy_drop(struct sock *sk, struct sk_buff *skb)
 {
@@ -107,23 +144,31 @@ void dccp_qpolicy_drop(struct sock *sk, struct sk_buff *skb)
 		kfree_skb(skb);
 	}
 }
+EXPORT_SYMBOL_GPL(dccp_qpolicy_drop);
 
 struct sk_buff *dccp_qpolicy_top(struct sock *sk)
 {
 	return qpol_table[dccp_sk(sk)->dccps_qpolicy].top(sk);
 }
+EXPORT_SYMBOL_GPL(dccp_qpolicy_top);
 
 struct sk_buff *dccp_qpolicy_pop(struct sock *sk)
 {
 	struct sk_buff *skb = dccp_qpolicy_top(sk);
 
-	if (skb != NULL) {
-		/* Clear any skb fields that we used internally */
-		skb->priority = 0;
-		skb_unlink(skb, &sk->sk_write_queue);
-	}
+	dccp_qpolicy_unlink (sk, skb);
 	return skb;
 }
+EXPORT_SYMBOL_GPL(dccp_qpolicy_pop);
+
+void dccp_qpolicy_unlink (struct sock *sk, struct sk_buff *skb)
+{
+	if (!sk || !skb) return;
+	/* Clear any skb fields that we used internally */
+	skb->priority = 0;
+	skb_unlink(skb, &sk->sk_write_queue);
+}
+EXPORT_SYMBOL_GPL(dccp_qpolicy_unlink);
 
 bool dccp_qpolicy_param_ok(struct sock *sk, __be32 param)
 {
@@ -132,3 +177,6 @@ bool dccp_qpolicy_param_ok(struct sock *sk, __be32 param)
 		return false;
 	return (qpol_table[dccp_sk(sk)->dccps_qpolicy].params & param) == param;
 }
+EXPORT_SYMBOL_GPL(dccp_qpolicy_param_ok);
+
+

@@ -23,6 +23,10 @@
 #include <net/tcp_states.h>
 #include <net/xfrm.h>
 #include <net/secure_seq.h>
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+#  include <net/mpdccp_link.h>
+#  include <net/mpdccp.h>
+#endif
 
 #include "ackvec.h"
 #include "ccid.h"
@@ -54,6 +58,11 @@ int dccp_v4_connect(struct sock *sk, struct sockaddr *uaddr, int addr_len)
 
 	if (usin->sin_family != AF_INET)
 		return -EAFNOSUPPORT;
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if (mpdccp_isactive(sk) > 0 || try_mpdccp(sk) == 1) {
+		return mpdccp_connect (sk, uaddr, addr_len);
+	}
+#endif
 
 	nexthop = daddr = usin->sin_addr.s_addr;
 
@@ -263,7 +272,7 @@ static int dccp_v4_err(struct sk_buff *skb, u32 info)
 		return 0;
 	}
 	seq = dccp_hdr_seq(dh);
-	if (sk->sk_state == DCCP_NEW_SYN_RECV) {
+	if (sk->sk_state == DCCP_NEW_SYN_RECV && type!=ICMP_REDIRECT) {
 		dccp_req_err(sk, seq);
 		return 0;
 	}
@@ -553,6 +562,26 @@ out:
 
 static void dccp_v4_reqsk_destructor(struct request_sock *req)
 {
+	struct dccp_request_sock *dreq;
+	dreq = dccp_rsk(req);
+
+	/* Release meta socket reference when request id destroyed */
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if (dreq->link_info) {
+		mpdccp_link_put (dreq->link_info);
+		dreq->link_info = NULL;
+	}
+	if (dreq->meta_sk) {
+		dccp_pr_debug("releasing meta socket %p from request\n", dreq->meta_sk);
+		sock_put(dreq->meta_sk);
+		dreq->meta_sk = NULL;
+	}
+	if (dreq->mpdccp_loc_cix) {
+		mpdccp_link_free_cid(dreq->mpdccp_loc_cix);
+		dreq->mpdccp_loc_cix = 0;
+	}
+#endif
+
 	dccp_feat_list_purge(&dccp_rsk(req)->dreq_featneg);
 	kfree(rcu_dereference_protected(inet_rsk(req)->ireq_opt, 1));
 }
@@ -611,6 +640,13 @@ int dccp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	if (dccp_parse_options(sk, dreq, skb))
 		goto drop_and_free;
 
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if ((mpdccp_isactive(sk) > 0) && dreq && (dreq->multipath_ver != MPDCCP_VERS_UNDEFINED)) {
+		if (mpdccp_conn_request(sk, dreq))
+			goto drop_and_free;
+	}
+#endif
+
 	if (security_inet_conn_request(sk, skb, req))
 		goto drop_and_free;
 
@@ -634,6 +670,11 @@ int dccp_v4_conn_request(struct sock *sk, struct sk_buff *skb)
 	dreq->dreq_gss     = dreq->dreq_iss;
 	dreq->dreq_service = service;
 
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	/* put here path detection - HACK: should be in mpdccp code, but this is a lot of work */
+	dreq->link_info = mpdccp_link_find_by_skb (read_pnet(&sk->sk_net), skb);
+#endif
+
 	if (dccp_v4_send_response(sk, req))
 		goto drop_and_free;
 
@@ -654,8 +695,9 @@ int dccp_v4_do_rcv(struct sock *sk, struct sk_buff *skb)
 	struct dccp_hdr *dh = dccp_hdr(skb);
 
 	if (sk->sk_state == DCCP_OPEN) { /* Fast path */
-		if (dccp_rcv_established(sk, skb, dh, skb->len))
+		if (dccp_rcv_established(sk, skb, dh, skb->len)){
 			goto reset;
+		}
 		return 0;
 	}
 
@@ -787,8 +829,8 @@ static int dccp_v4_rcv(struct sk_buff *skb)
 	iph = ip_hdr(skb);
 	/* Step 1: If header checksum is incorrect, drop packet and return */
 	if (dccp_v4_csum_finish(skb, iph->saddr, iph->daddr)) {
-		DCCP_WARN("dropped packet with invalid checksum\n");
-		goto discard_it;
+		//DCCP_WARN("dropped packet with invalid checksum\n");
+		//goto discard_it;
 	}
 
 	dh = dccp_hdr(skb);
@@ -844,6 +886,7 @@ lookup:
 		sock_hold(sk);
 		refcounted = true;
 		nsk = dccp_check_req(sk, skb, req);
+
 		if (!nsk) {
 			reqsk_put(req);
 			goto discard_and_relse;
@@ -931,6 +974,11 @@ static int dccp_v4_init_sock(struct sock *sk)
 	return err;
 }
 
+static int inet_dccp_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+{
+	return inet_bind (sock, uaddr, addr_len);
+}
+
 static struct timewait_sock_ops dccp_timewait_sock_ops = {
 	.twsk_obj_size	= sizeof(struct inet_timewait_sock),
 };
@@ -945,6 +993,9 @@ static struct proto dccp_v4_prot = {
 	.init			= dccp_v4_init_sock,
 	.setsockopt		= dccp_setsockopt,
 	.getsockopt		= dccp_getsockopt,
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	.keepalive		= dccp_set_keepalive,
+#endif
 	.sendmsg		= dccp_sendmsg,
 	.recvmsg		= dccp_recvmsg,
 	.backlog_rcv		= dccp_v4_do_rcv,
@@ -975,7 +1026,7 @@ static const struct proto_ops inet_dccp_ops = {
 	.family		   = PF_INET,
 	.owner		   = THIS_MODULE,
 	.release	   = inet_release,
-	.bind		   = inet_bind,
+	.bind		   = inet_dccp_bind,
 	.connect	   = inet_stream_connect,
 	.socketpair	   = sock_no_socketpair,
 	.accept		   = inet_accept,

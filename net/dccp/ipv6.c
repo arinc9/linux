@@ -29,6 +29,11 @@
 #include <net/secure_seq.h>
 #include <net/sock.h>
 
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+# include <net/mpdccp.h>
+# include <net/mpdccp_link.h>
+#endif
+
 #include "dccp.h"
 #include "ipv6.h"
 #include "feat.h"
@@ -243,6 +248,21 @@ done:
 
 static void dccp_v6_reqsk_destructor(struct request_sock *req)
 {
+	struct dccp_request_sock *dreq;
+	dreq = dccp_rsk(req);
+
+	/* Release meta socket reference when request id destroyed */
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if (dreq->link_info) {
+		mpdccp_link_put (dreq->link_info);
+		dreq->link_info = NULL;
+	}
+	if (dreq->meta_sk) {
+		dccp_pr_debug("releasing meta socket %p from request\n", dreq->meta_sk);
+		sock_put(dreq->meta_sk);
+		dreq->meta_sk = NULL;
+	}
+#endif
 	dccp_feat_list_purge(&dccp_rsk(req)->dreq_featneg);
 	kfree(inet_rsk(req)->ipv6_opt);
 	kfree_skb(inet_rsk(req)->pktopts);
@@ -348,6 +368,13 @@ static int dccp_v6_conn_request(struct sock *sk, struct sk_buff *skb)
 	dreq = dccp_rsk(req);
 	if (dccp_parse_options(sk, dreq, skb))
 		goto drop_and_free;
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if ((mpdccp_isactive(sk) > 0) && dreq && (dreq->multipath_ver != MPDCCP_VERS_UNDEFINED)) {
+		if (mpdccp_conn_request(sk, dreq))
+			goto drop_and_free;
+	}
+#endif
 
 	if (security_inet_conn_request(sk, skb, req))
 		goto drop_and_free;
@@ -828,6 +855,12 @@ static int dccp_v6_connect(struct sock *sk, struct sockaddr *uaddr,
 	if (usin->sin6_family != AF_INET6)
 		return -EAFNOSUPPORT;
 
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if (mpdccp_is_meta(sk)) {
+		return mpdccp_connect (sk, uaddr, addr_len);
+	}
+#endif
+
 	memset(&fl6, 0, sizeof(fl6));
 
 	if (np->sndflow) {
@@ -1016,6 +1049,11 @@ static void dccp_v6_destroy_sock(struct sock *sk)
 	inet6_destroy_sock(sk);
 }
 
+static int inet6_dccp_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
+{
+	return inet6_bind (sock, uaddr, addr_len);
+}
+
 static struct timewait_sock_ops dccp6_timewait_sock_ops = {
 	.twsk_obj_size	= sizeof(struct dccp6_timewait_sock),
 };
@@ -1058,7 +1096,7 @@ static const struct proto_ops inet6_dccp_ops = {
 	.family		   = PF_INET6,
 	.owner		   = THIS_MODULE,
 	.release	   = inet6_release,
-	.bind		   = inet6_bind,
+	.bind		   = inet6_dccp_bind,
 	.connect	   = inet_stream_connect,
 	.socketpair	   = sock_no_socketpair,
 	.accept		   = inet_accept,

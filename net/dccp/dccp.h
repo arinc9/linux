@@ -89,13 +89,32 @@ void dccp_time_wait(struct sock *sk, int state, int timeo);
 #define DCCP_SANE_RTT_MIN	100
 #define DCCP_FALLBACK_RTT	(USEC_PER_SEC / 5)
 #define DCCP_SANE_RTT_MAX	(3 * USEC_PER_SEC)
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+#define DCCP_KEEPALIVE_SND_INTVL	(20*HZ)
+#define DCCP_KEEPALIVE_RCV_INTVL	(7200*HZ)	
+#endif
+#define DCCP_EVENT_CLOSE	0x0001
 
 /* sysctl variables for DCCP */
 extern int  sysctl_dccp_request_retries;
 extern int  sysctl_dccp_retries1;
 extern int  sysctl_dccp_retries2;
 extern int  sysctl_dccp_tx_qlen;
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+extern int  sysctl_dccp_keepalive_enable;
+extern int  sysctl_dccp_keepalive_snd_intvl;
+extern int  sysctl_dccp_keepalive_rcv_intvl;
+#endif
 extern int  sysctl_dccp_sync_ratelimit;
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+/* Reordering role: Controls addition of new DCCP options on client side
+ * (overall sequence number, delay value transmission)
+ * true  : client role
+ * false : server role
+ */
+extern bool mpdccp_role;
+#endif
 
 /*
  *	48-bit sequence number arithmetic (signed and unsigned)
@@ -221,6 +240,10 @@ void dccp_v4_send_check(struct sock *sk, struct sk_buff *skb);
 int dccp_retransmit_skb(struct sock *sk);
 
 void dccp_send_ack(struct sock *sk);
+void dccp_send_ack_entail(struct sock *sk);
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+void dccp_send_keepalive(struct sock *sk);
+#endif
 void dccp_reqsk_send_ack(const struct sock *sk, struct sk_buff *skb,
 			 struct request_sock *rsk);
 
@@ -235,6 +258,7 @@ bool dccp_qpolicy_full(struct sock *sk);
 void dccp_qpolicy_drop(struct sock *sk, struct sk_buff *skb);
 struct sk_buff *dccp_qpolicy_top(struct sock *sk);
 struct sk_buff *dccp_qpolicy_pop(struct sock *sk);
+void dccp_qpolicy_unlink (struct sock *sk, struct sk_buff *skb);
 bool dccp_qpolicy_param_ok(struct sock *sk, __be32 param);
 
 /*
@@ -296,6 +320,9 @@ int dccp_getsockopt(struct sock *sk, int level, int optname,
 		    char __user *optval, int __user *optlen);
 int dccp_setsockopt(struct sock *sk, int level, int optname,
 		    sockptr_t optval, unsigned int optlen);
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+void dccp_set_keepalive(struct sock *sk, int val);
+#endif
 int dccp_ioctl(struct sock *sk, int cmd, unsigned long arg);
 int dccp_sendmsg(struct sock *sk, struct msghdr *msg, size_t size);
 int dccp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
@@ -312,6 +339,10 @@ int dccp_send_reset(struct sock *sk, enum dccp_reset_codes code);
 void dccp_send_close(struct sock *sk, const int active);
 int dccp_invalid_packet(struct sk_buff *skb);
 u32 dccp_sample_rtt(struct sock *sk, long delta);
+void dccp_finish_passive_close(struct sock *sk);
+
+int register_dccp_notifier(struct notifier_block *nb);
+int unregister_dccp_notifier(struct notifier_block *nb);
 
 static inline bool dccp_bad_service_code(const struct sock *sk,
 					const __be32 service)
@@ -345,13 +376,43 @@ struct dccp_skb_cb {
 	__u8  dccpd_type:4;
 	__u8  dccpd_ccval:4;
 	__u8  dccpd_reset_code,
-	      dccpd_reset_data[3];
+	      dccpd_reset_data[3];     
 	__u16 dccpd_opt_len;
 	__u64 dccpd_seq;
 	__u64 dccpd_ack_seq;
+	__u64 dccpd_mpseq;
 };
 
 #define DCCP_SKB_CB(__skb) ((struct dccp_skb_cb *)&((__skb)->cb[0]))
+
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+/* Keepalive conf */
+static inline int dccp_keepalive_rcv_when(const struct dccp_sock *dp)
+{
+	return dp->dccps_keepalive_rcv_intvl;
+}
+
+static inline int dccp_keepalive_snd_when(const struct dccp_sock *dp)
+{
+	return dp->dccps_keepalive_snd_intvl;
+}
+
+static inline u32 dccp_keepalive_rcv_elapsed(const struct dccp_sock *dp)
+{
+	
+	dccp_pr_debug("jif %u lrcv %u", tcp_jiffies32, dp->dccps_lrcvtime);
+	return tcp_jiffies32 - dp->dccps_lrcvtime;
+
+}
+
+static inline u32 dccp_keepalive_snd_elapsed(const struct dccp_sock *dp)
+{
+	
+	dccp_pr_debug("jif %u lsnd %u", tcp_jiffies32, dp->dccps_lsndtime);
+	return tcp_jiffies32 - dp->dccps_lsndtime;
+
+}
+#endif
 
 /* RFC 4340, sec. 7.7 */
 static inline int dccp_non_data_packet(const struct sk_buff *skb)
@@ -415,7 +476,7 @@ static inline void dccp_update_gsr(struct sock *sk, u64 seq)
 	 * Adjust SWL so that it is not below ISR. In contrast to RFC 4340,
 	 * 7.5.1 we perform this check beyond the initial handshake: W/W' are
 	 * always > 32, so for the first W/W' packets in the lifetime of a
-	 * connection we always have to adjust SWL.
+	 * connection we always have to adjust SWL..
 	 * A second reason why we are doing this is that the window depends on
 	 * the feature-remote value of Sequence Window: nothing stops the peer
 	 * from updating this value while we are busy adjusting SWL for the
@@ -465,6 +526,7 @@ void dccp_feat_list_purge(struct list_head *fn_list);
 
 int dccp_insert_options(struct sock *sk, struct sk_buff *skb);
 int dccp_insert_options_rsk(struct dccp_request_sock *, struct sk_buff *);
+int dccp_insert_options_rsk_mp(const struct sock *sk, struct dccp_request_sock *dreq, struct sk_buff *skb);
 u32 dccp_timestamp(void);
 void dccp_timestamping_init(void);
 int dccp_insert_option(struct sk_buff *skb, unsigned char option,

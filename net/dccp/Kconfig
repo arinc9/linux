@@ -25,6 +25,14 @@ config INET_DCCP_DIAG
 	def_tristate y if (IP_DCCP = y && INET_DIAG = y)
 	def_tristate m
 
+config DCCP_KEEPALIVE
+	bool "DCCP keepalive"
+	default y
+	help
+	  Enables Keepalive for DCCP
+
+	  If in doubt, say Y.
+
 source "net/dccp/ccids/Kconfig"
 
 menu "DCCP Kernel Hacking"
@@ -43,4 +51,39 @@ config IP_DCCP_DEBUG
 
 endmenu
 
+menuconfig IP_MPDCCP
+	tristate "Multipath DCCP"
+	help
+	   This module enables bundling of multiple physical connections over
+	   the DCCP protocol. If you don't understand what was just said, 
+	   you don't need it: say N.
+
+	   To compile this code as a module, choose M here: the
+	   module will be called dccp_mpdccp.
+
+if IP_MPDCCP
+config IP_MPDCCP_DEBUG
+	bool "MPDCCP debug messages"
+	help
+	  Only use this if you're hacking MPDCCP.
+
+	  When compiling MPDCCP as a module, this debugging output can be toggled
+	  by setting the parameter mpdccp_debug of the `dccp_mpdccp' module to 0 or 1.
+
+	  Just say N.
+
+
+source "net/dccp/pm/Kconfig"
+source "net/dccp/scheduler/Kconfig"
+source "net/dccp/reordering/Kconfig"
+
+
+config MPDCCP_STATS
+	bool "MPDCCP Statistics"
+	depends on IP_MPDCCP
+	help
+		Creates some statistics in /sys/class/net/<dev>
+
+
+endif # IP_MPDDCP
 endif # IP_DDCP

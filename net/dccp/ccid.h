@@ -15,12 +15,12 @@
 #include <linux/dccp.h>
 #include <linux/list.h>
 #include <linux/module.h>
-
+#include <net/tcp.h> //added by nath
 /* maximum value for a CCID (RFC 4340, 19.5) */
 #define CCID_MAX		255
 #define CCID_SLAB_NAME_LENGTH	32
 
-struct tcp_info;
+//struct tcp_info;
 
 /**
  *  struct ccid_operations  -  Interface to Congestion-Control Infrastructure
@@ -88,6 +88,15 @@ struct ccid_operations {
 extern struct ccid_operations ccid2_ops;
 #ifdef CONFIG_IP_DCCP_CCID3
 extern struct ccid_operations ccid3_ops;
+#endif
+#ifdef CONFIG_IP_DCCP_CCID5
+extern struct ccid_operations ccid5_ops;
+#endif
+#ifdef CONFIG_IP_DCCP_CCID6
+extern struct ccid_operations ccid6_ops;
+#endif
+#ifdef CONFIG_IP_DCCP_CCID7
+extern struct ccid_operations ccid7_ops;
 #endif
 
 int ccid_initialize_builtins(void);
@@ -258,5 +267,83 @@ static inline int ccid_hc_tx_getsockopt(struct ccid *ccid, struct sock *sk,
 		rc = ccid->ccid_ops->ccid_hc_tx_getsockopt(sk, optname, len,
 						 optval, optlen);
 	return rc;
+}
+
+/* functions to get delay by natha :)*/
+
+/**
+ * Obtain SRTT value form CCID2 TX sock.
+ * NOTE: value is divided by 8 to match MRTT
+ */
+static inline u32 srtt_as_delayn(struct sock *sk, struct tcp_info *info, u8 *type){
+    if(dccp_sk(sk)->dccps_hc_tx_ccid != NULL) { 
+		*type = 3;
+    	ccid_hc_tx_get_info(dccp_sk(sk)->dccps_hc_tx_ccid, sk, info);
+    	return jiffies_to_msecs(info->tcpi_rtt >> 3); }		// divide by 2^3 (8)
+    else { return 0; }
+}
+
+/**
+ * Obtain MRTT value form CCID2 TX sock.
+ */
+static inline u32 mrtt_as_delayn(struct sock *sk, struct tcp_info *info, u8 *type){
+    if(dccp_sk(sk)->dccps_hc_tx_ccid != NULL) { 
+		*type = 0;
+    	ccid_hc_tx_get_info(dccp_sk(sk)->dccps_hc_tx_ccid, sk, info);
+    	return jiffies_to_msecs(info->tcpi_rttvar); }
+    else{ return 0; }
+}
+
+/**
+ * Obtain Min RTT value form CCID2 TX sock.
+ */
+static inline u32 min_rtt_as_delayn(struct sock *sk, struct tcp_info *info, u8 *type){
+    if(dccp_sk(sk)->dccps_hc_tx_ccid != NULL) { 
+		*type = 1;
+    	ccid_hc_tx_get_info(dccp_sk(sk)->dccps_hc_tx_ccid, sk, info);
+		// overwrite age field to display correct timestamp
+		info->tcpi_last_ack_recv = info->tcpi_last_ack_sent;
+    	return jiffies_to_msecs(info->tcpi_min_rtt); }
+    else{ return 0; }
+}
+
+/**
+ * Obtain Max RTT value form CCID2 TX sock.
+ */
+static inline u32 max_rtt_as_delayn(struct sock *sk, struct tcp_info *info, u8 *type){
+    if(dccp_sk(sk)->dccps_hc_tx_ccid != NULL) { 
+		*type = 2;
+    	ccid_hc_tx_get_info(dccp_sk(sk)->dccps_hc_tx_ccid, sk, info);
+		// overwrite age field to display correct timestamp
+		info->tcpi_last_ack_recv = info->tcpi_rcv_mss;
+    	return jiffies_to_msecs(info->tcpi_snd_mss); }
+    else{ return 0; }
+}
+
+extern u32 (*get_delay_valn)(struct sock *sk, struct tcp_info *info, u8 *type);
+
+static inline void set_srtt_as_delayn(void){
+    get_delay_valn = srtt_as_delayn;
+}
+
+static inline void set_mrtt_as_delayn(void){
+    get_delay_valn = mrtt_as_delayn;
+}
+
+static inline void set_min_rtt_as_delayn(void){
+    get_delay_valn = min_rtt_as_delayn;
+}
+
+static inline void set_max_rtt_as_delayn(void){
+    get_delay_valn = max_rtt_as_delayn;
+}
+
+/*
+ * Convert RFC 3390 larger initial window into an equivalent number of packets.
+ * This is based on the numbers specified in RFC 5681, 3.1.
+ */
+static inline u32 rfc3390_bytes_to_packets(const u32 smss)
+{
+        return smss <= 1095 ? 4 : (smss > 2190 ? 2 : 3);
 }
 #endif /* _CCID_H */

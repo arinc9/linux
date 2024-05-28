@@ -145,6 +145,7 @@ enum dccp_reset_codes {
 	DCCP_RESET_CODE_TOO_BUSY,
 	DCCP_RESET_CODE_BAD_INIT_COOKIE,
 	DCCP_RESET_CODE_AGGRESSION_PENALTY,
+	DCCP_RESET_CODE_MPDCCP_ABORTED = 13,
 
 	DCCP_MAX_RESET_CODES		/* Leave at the end!  */
 };
@@ -165,6 +166,7 @@ enum {
 	DCCPO_TIMESTAMP = 41,
 	DCCPO_TIMESTAMP_ECHO = 42,
 	DCCPO_ELAPSED_TIME = 43,
+	DCCPO_MULTIPATH = 46,
 	DCCPO_MAX = 45,
 	DCCPO_MIN_RX_CCID_SPECIFIC = 128,	/* from sender to receiver */
 	DCCPO_MAX_RX_CCID_SPECIFIC = 191,
@@ -174,10 +176,32 @@ enum {
 /* maximum size of a single TLV-encoded DCCP option (sans type/len bytes) */
 #define DCCP_SINGLE_OPT_MAXLEN	253
 
+/* MP-DCCP options */
+enum {
+	DCCPO_MP_CONFIRM = 0,				/* Confirm reception and processing of an MP_OPT option */
+	DCCPO_MP_JOIN = 1,					/* Join path to an existing MP-DCCP flow */
+	DCCPO_MP_FAST_CLOSE = 2,		/* Close MP-DCCP flow */
+	DCCPO_MP_KEY = 3,						/* Exchange key material for MP_HMAC */
+	DCCPO_MP_SEQ = 4,						/* MPDCCP overall sequence number */
+	DCCPO_MP_HMAC = 5,					/* HMA Code for authentication */
+	DCCPO_MP_RTT = 6,						/* Transmit RTT values */
+	DCCPO_MP_ADDADDR = 7,				/* Advertise additional Address */
+	DCCPO_MP_REMOVEADDR  = 8,			/* Remove Address */
+	DCCPO_MP_PRIO = 9,					/* path priorization */
+	DCCPO_MP_CLOSE = 10,				/* Close MPDCCP flow */
+};
+
 /* DCCP CCIDS */
 enum {
 	DCCPC_CCID2 = 2,
 	DCCPC_CCID3 = 3,
+	DCCPC_CCID5 = 5,
+	DCCPC_CCID6 = 6,
+	DCCPC_CCID7 = 7,
+
+#define DCCPC_TESTING_MIN	248
+#define DCCPC_TESTING_MAX	255
+	DCCPC_CCID_ZERO = DCCPC_TESTING_MIN,
 };
 
 /* DCCP features (RFC 4340 section 6.4) */
@@ -192,7 +216,8 @@ enum dccp_feature_numbers {
 	DCCPF_SEND_NDP_COUNT = 7,
 	DCCPF_MIN_CSUM_COVER = 8,
 	DCCPF_DATA_CHECKSUM = 9,
-	/* 10-127 reserved */
+	DCCPF_MULTIPATH = 10,	/* Used to negotiate MP support on connection establishment */
+	/* 11-127 reserved */
 	DCCPF_MIN_CCID_SPECIFIC = 128,
 	DCCPF_SEND_LEV_RATE = 192,	/* RFC 4342, sec. 8.4 */
 	DCCPF_MAX_CCID_SPECIFIC = 255,
@@ -210,7 +235,51 @@ enum dccp_cmsg_type {
 enum dccp_packet_dequeueing_policy {
 	DCCPQ_POLICY_SIMPLE,
 	DCCPQ_POLICY_PRIO,
+	DCCPQ_POLICY_DROP_OLDEST,
+	DCCPQ_POLICY_DROP_NEWEST,
 	DCCPQ_POLICY_MAX
+};
+/* for #ifdef's */
+#define DCCPQ_POLICY_DROP_OLDEST DCCPQ_POLICY_DROP_OLDEST
+#define DCCPQ_POLICY_DROP_NEWEST DCCPQ_POLICY_DROP_NEWEST
+
+
+
+/* Authentication data */
+#define MPDCCP_PLAIN_KEY_SIZE 8
+#define MPDCCP_C25519_KEY_SIZE 32
+#define MPDCCP_MAX_KEY_SIZE MPDCCP_C25519_KEY_SIZE
+#define MPDCCP_MAX_KEYS 3
+#define MPDCCP_HMAC_SIZE 20
+
+#define MPDCCP_ADDADDR_SIZE 22
+#define MPDCCP_CONFIRM_SIZE 31
+
+/* MPDCCP version type */
+enum mpdccp_version {
+	MPDCCP_VERS_0 = 0,
+	MPDCCP_VERS_MAX = 1,
+	MPDCCP_VERS_UNDEFINED = 0xF,
+};
+
+/* MPDCCP key types */
+enum mpdccp_key_type {
+	DCCPK_PLAIN = 0,
+	DCCPK_C25519_SHA256 = 1,
+	DCCPK_C25519_SHA512 = 2,
+	DCCPK_INVALID  = 255,
+};
+
+enum {
+	DCCPKF_PLAIN = (1 << DCCPK_PLAIN),
+	DCCPKF_C25519_SHA256 = (1 << DCCPK_C25519_SHA256),
+	DCCPKF_C25519_SHA512 = (1 << DCCPK_C25519_SHA512),
+};
+
+struct mpdccp_key {
+	enum mpdccp_key_type type;
+	__u32 size;
+	__u8 value[MPDCCP_MAX_KEY_SIZE];
 };
 
 /* DCCP socket options */
@@ -228,8 +297,15 @@ enum dccp_packet_dequeueing_policy {
 #define DCCP_SOCKOPT_RX_CCID		15
 #define DCCP_SOCKOPT_QPOLICY_ID		16
 #define DCCP_SOCKOPT_QPOLICY_TXQLEN	17
+#define DCCP_SOCKOPT_MULTIPATH		18
+#define DCCP_SOCKOPT_KEEPALIVE		19
+#define DCCP_SOCKOPT_KA_TIMEOUT		20
+#define DCCP_SOCKOPT_MP_SCHEDULER	21
+#define DCCP_SOCKOPT_MP_REORDER		22
+#define DCCP_SOCKOPT_MP_FAST_CLOSE	23
 #define DCCP_SOCKOPT_CCID_RX_INFO	128
 #define DCCP_SOCKOPT_CCID_TX_INFO	192
+#define DCCP_SOCKOPT_CCID_LIM_RTO   193
 
 /* maximum number of services provided on the same listening port */
 #define DCCP_SERVICE_LIST_MAX_LEN      32

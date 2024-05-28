@@ -34,9 +34,18 @@
 #include "ccid.h"
 #include "dccp.h"
 #include "feat.h"
+#include <linux/notifier.h>
+
+#include <net/mpdccp.h>
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+struct mpdccp_funcs      mpdccp_funcs = { .magic = 0, };
+EXPORT_SYMBOL (mpdccp_funcs);
+#endif
+
 
 DEFINE_SNMP_STAT(struct dccp_mib, dccp_statistics) __read_mostly;
 
@@ -50,6 +59,11 @@ EXPORT_SYMBOL_GPL(dccp_hashinfo);
 
 /* the maximum queue length for tx in packets. 0 is no limit */
 int sysctl_dccp_tx_qlen __read_mostly = 5;
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+int sysctl_dccp_keepalive_enable __read_mostly = 0;
+int sysctl_dccp_keepalive_snd_intvl __read_mostly = DCCP_KEEPALIVE_SND_INTVL;
+int sysctl_dccp_keepalive_rcv_intvl __read_mostly = DCCP_KEEPALIVE_RCV_INTVL;
+#endif
 
 #ifdef CONFIG_IP_DCCP_DEBUG
 static const char *dccp_state_name(const int state)
@@ -75,6 +89,9 @@ static const char *dccp_state_name(const int state)
 }
 #endif
 
+static ATOMIC_NOTIFIER_HEAD(dccp_chain);
+
+
 void dccp_set_state(struct sock *sk, const int state)
 {
 	const int oldstate = sk->sk_state;
@@ -87,11 +104,21 @@ void dccp_set_state(struct sock *sk, const int state)
 	case DCCP_OPEN:
 		if (oldstate != DCCP_OPEN)
 			DCCP_INC_STATS(DCCP_MIB_CURRESTAB);
+		
 		/* Client retransmits all Confirm options until entering OPEN */
 		if (oldstate == DCCP_PARTOPEN)
 			dccp_feat_list_purge(&dccp_sk(sk)->dccps_featneg);
 		break;
-
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	case DCCP_PARTOPEN:
+		if (dccp_sk(sk)->dccps_keepalive_enable && sk->sk_prot->keepalive)
+		{
+			dccp_pr_debug("set keepalive");
+			sk->sk_prot->keepalive(sk, 1);
+			sock_set_flag(sk, SOCK_KEEPOPEN);
+		}
+		break;		
+#endif
 	case DCCP_CLOSED:
 		if (oldstate == DCCP_OPEN || oldstate == DCCP_ACTIVE_CLOSEREQ ||
 		    oldstate == DCCP_CLOSING)
@@ -111,11 +138,17 @@ void dccp_set_state(struct sock *sk, const int state)
 	 * socket sitting in hash tables.
 	 */
 	inet_sk_set_state(sk, state);
+	if (sk->sk_state_change)
+		sk->sk_state_change (sk);
+	
+	if(oldstate == DCCP_OPEN && state==DCCP_CLOSING)
+		atomic_notifier_call_chain(&dccp_chain,
+						DCCP_EVENT_CLOSE, sk);
 }
 
 EXPORT_SYMBOL_GPL(dccp_set_state);
 
-static void dccp_finish_passive_close(struct sock *sk)
+void dccp_finish_passive_close(struct sock *sk)
 {
 	switch (sk->sk_state) {
 	case DCCP_PASSIVE_CLOSE:
@@ -132,6 +165,7 @@ static void dccp_finish_passive_close(struct sock *sk)
 		dccp_set_state(sk, DCCP_CLOSING);
 	}
 }
+EXPORT_SYMBOL(dccp_finish_passive_close);
 
 void dccp_done(struct sock *sk)
 {
@@ -196,6 +230,16 @@ int dccp_init_sock(struct sock *sk, const __u8 ctl_sock_initialized)
 	dp->dccps_role		= DCCP_ROLE_UNDEFINED;
 	dp->dccps_service	= DCCP_SERVICE_CODE_IS_ABSENT;
 	dp->dccps_tx_qlen	= sysctl_dccp_tx_qlen;
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	dp->dccps_keepalive_snd_intvl = sysctl_dccp_keepalive_snd_intvl;
+	dp->dccps_keepalive_rcv_intvl = sysctl_dccp_keepalive_rcv_intvl;
+	dp->dccps_keepalive_enable = sysctl_dccp_keepalive_enable;
+#endif
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	dp->multipath_ver = MPDCCP_VERS_UNDEFINED;
+#endif
+	dp->dccps_hc_rx_ccid = NULL;
+	dp->dccps_hc_tx_ccid = NULL;
 
 	dccp_init_xmit_timers(sk);
 
@@ -217,6 +261,11 @@ void dccp_destroy_sock(struct sock *sk)
 		kfree_skb(sk->sk_send_head);
 		sk->sk_send_head = NULL;
 	}
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if (mpdccp_is_meta(sk)) {
+		mpdccp_destroy_sock (sk);
+	}
+#endif
 
 	/* Clean up a referenced DCCP bind bucket. */
 	if (inet_csk(sk)->icsk_bind_hash != NULL)
@@ -238,11 +287,24 @@ void dccp_destroy_sock(struct sock *sk)
 
 EXPORT_SYMBOL_GPL(dccp_destroy_sock);
 
+
+
 static inline int dccp_listen_start(struct sock *sk, int backlog)
 {
 	struct dccp_sock *dp = dccp_sk(sk);
-
 	dp->dccps_role = DCCP_ROLE_LISTEN;
+
+	/* Register MP_CAPABLE feature for multipath sockets */
+	if (is_mpdccp(sk) || try_mpdccp(sk) == 1) {
+		int ret;
+		ret = dccp_feat_register_sp(sk, DCCPF_MULTIPATH, 1,
+						mpdccp_supported_versions,
+						ARRAY_SIZE(mpdccp_supported_versions));
+		if (ret < 0 ) {
+			return -EPROTO;
+		}
+	}
+
 	/* do not start to listen if feature negotiation setup fails */
 	if (dccp_feat_finalise_settings(dp))
 		return -EPROTO;
@@ -261,6 +323,12 @@ int dccp_disconnect(struct sock *sk, int flags)
 	struct inet_sock *inet = inet_sk(sk);
 	struct dccp_sock *dp = dccp_sk(sk);
 	const int old_state = sk->sk_state;
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if (mpdccp_is_meta(sk)) {
+		/* not implemented yet */
+	}
+#endif
 
 	if (old_state != DCCP_CLOSED)
 		dccp_set_state(sk, DCCP_CLOSED);
@@ -511,6 +579,7 @@ static int do_dccp_setsockopt(struct sock *sk, int level, int optname,
 	struct dccp_sock *dp = dccp_sk(sk);
 	int val, err = 0;
 
+	dccp_pr_debug ("setsockopt: %d\n", optname);
 	switch (optname) {
 	case DCCP_SOCKOPT_PACKET_SIZE:
 		DCCP_WARN("sockopt(PACKET_SIZE) is deprecated: fix your app\n");
@@ -562,6 +631,19 @@ static int do_dccp_setsockopt(struct sock *sk, int level, int optname,
 		else
 			dp->dccps_tx_qlen = val;
 		break;
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	case DCCP_SOCKOPT_MULTIPATH:
+		err = mpdccp_activate (sk, val);
+		break;
+#endif
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	case DCCP_SOCKOPT_KEEPALIVE:
+		dp->dccps_keepalive_snd_intvl = val;
+		break;
+	case DCCP_SOCKOPT_KA_TIMEOUT:
+		dp->dccps_keepalive_rcv_intvl = val;
+		break;
+#endif
 	default:
 		err = -ENOPROTOOPT;
 		break;
@@ -662,6 +744,19 @@ static int do_dccp_getsockopt(struct sock *sk, int level, int optname,
 	case DCCP_SOCKOPT_QPOLICY_TXQLEN:
 		val = dp->dccps_tx_qlen;
 		break;
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	case DCCP_SOCKOPT_MULTIPATH:
+		val = mpdccp_isactive (sk);
+		break;
+#endif
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	case DCCP_SOCKOPT_KEEPALIVE:
+		val = dp->dccps_keepalive_snd_intvl;
+		break;
+	case DCCP_SOCKOPT_KA_TIMEOUT:
+		val = dp->dccps_keepalive_rcv_intvl;
+		break;
+#endif
 	case 128 ... 191:
 		return ccid_hc_rx_getsockopt(dp->dccps_hc_rx_ccid, sk, optname,
 					     len, (u32 __user *)optval, optlen);
@@ -802,6 +897,28 @@ out_discard:
 
 EXPORT_SYMBOL_GPL(dccp_sendmsg);
 
+static inline struct sk_buff *skb_peek_safe(struct sk_buff_head *list)
+{
+	unsigned long flags;
+	struct sk_buff *skb;
+
+	spin_lock_irqsave(&list->lock, flags);
+	skb = skb_peek(list);
+	spin_unlock_irqrestore(&list->lock, flags);
+
+	return skb;
+}
+
+static inline void sk_eat_skb_safe(struct sock *sk, struct sk_buff *skb)
+{
+	unsigned long flags;
+	struct sk_buff_head *list = &sk->sk_receive_queue;
+
+	spin_lock_irqsave(&list->lock, flags);
+	sk_eat_skb(sk,skb);
+	spin_unlock_irqrestore(&list->lock, flags);
+}
+
 int dccp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 		 int flags, int *addr_len)
 {
@@ -818,7 +935,14 @@ int dccp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 	timeo = sock_rcvtimeo(sk, nonblock);
 
 	do {
-		struct sk_buff *skb = skb_peek(&sk->sk_receive_queue);
+		/* For meta sockets this can race with mpdccp_forward_skb(), need atomic access to rx queue */
+		struct sk_buff *skb;
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+		if (mpdccp_is_meta(sk))
+			skb = skb_peek_safe(&sk->sk_receive_queue);
+		else
+#endif
+			skb = skb_peek(&sk->sk_receive_queue);
 
 		if (skb == NULL)
 			goto verify_sock_status;
@@ -843,7 +967,13 @@ int dccp_recvmsg(struct sock *sk, struct msghdr *msg, size_t len, int nonblock,
 		default:
 			dccp_pr_debug("packet_type=%s\n",
 				      dccp_packet_name(dh->dccph_type));
-			sk_eat_skb(sk, skb);
+			/* For meta sockets this can race with mpdccp_forward_skb(), need atomic access to rx queue */
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+			if (mpdccp_is_meta(sk))
+				sk_eat_skb_safe(sk, skb);
+			else
+#endif
+				sk_eat_skb(sk, skb);
 		}
 verify_sock_status:
 		if (sock_flag(sk, SOCK_DONE)) {
@@ -899,8 +1029,15 @@ verify_sock_status:
 		if (flags & MSG_TRUNC)
 			len = skb->len;
 	found_fin_ok:
-		if (!(flags & MSG_PEEK))
-			sk_eat_skb(sk, skb);
+		if (!(flags & MSG_PEEK)) {
+			/* For meta sockets this can race with mpdccp_forward_skb(), need atomic access to rx queue */
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+			if (mpdccp_is_meta(sk))
+				sk_eat_skb_safe(sk, skb);
+			else
+#endif
+				sk_eat_skb(sk, skb);
+		}
 		break;
 	} while (1);
 out:
@@ -960,9 +1097,26 @@ static void dccp_terminate_connection(struct sock *sk)
 	case DCCP_PARTOPEN:
 		dccp_pr_debug("Stop PARTOPEN timer (%p)\n", sk);
 		inet_csk_clear_xmit_timer(sk, ICSK_TIME_DACK);
+
+		if (is_mpdccp(sk) && dccp_sk(sk)->dccps_role == DCCP_ROLE_CLIENT) {
+			/* Stop the ACK retry timer */
+			inet_csk_clear_xmit_timer(sk, ICSK_TIME_RETRANS);
+			if (sk->sk_send_head != NULL) {
+				kfree_skb(sk->sk_send_head);
+				sk->sk_send_head = NULL;
+			}
+		}
 		fallthrough;
 	case DCCP_OPEN:
-		dccp_send_close(sk, 1);
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+		/* Don't send close pkt on MP meta sockets*/
+		if (!mpdccp_is_meta(sk)) {
+			if (dccp_sk(sk)->is_fast_close)
+				dccp_send_reset(sk, DCCP_RESET_CODE_MPDCCP_ABORTED);
+			else
+				dccp_send_close(sk, 1);
+		}
+#endif
 
 		if (dccp_sk(sk)->dccps_role == DCCP_ROLE_SERVER &&
 		    !dccp_sk(sk)->dccps_server_timewait)
@@ -973,6 +1127,12 @@ static void dccp_terminate_connection(struct sock *sk)
 	default:
 		dccp_set_state(sk, next_state);
 	}
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if (mpdccp_is_meta(sk)) {
+		mpdccp_close_meta(sk);
+	}
+#endif
 }
 
 void dccp_close(struct sock *sk, long timeout)
@@ -981,7 +1141,7 @@ void dccp_close(struct sock *sk, long timeout)
 	struct sk_buff *skb;
 	u32 data_was_unread = 0;
 	int state;
-
+	dccp_pr_debug("enter dccp_close (%p), timeout %ld \n", sk, timeout);
 	lock_sock(sk);
 
 	sk->sk_shutdown = SHUTDOWN_MASK;
@@ -1008,8 +1168,12 @@ void dccp_close(struct sock *sk, long timeout)
 	}
 
 	/* If socket has been already reset kill it. */
-	if (sk->sk_state == DCCP_CLOSED)
+	if (sk->sk_state == DCCP_CLOSED){
+		if (is_mpdccp(sk) && dp->is_fast_close) {
+			dccp_send_reset(sk, DCCP_RESET_CODE_MPDCCP_ABORTED);
+		}
 		goto adjudge_to_death;
+	}
 
 	if (data_was_unread) {
 		/* Unread data was tossed, send an appropriate Reset Code */
@@ -1035,7 +1199,6 @@ void dccp_close(struct sock *sk, long timeout)
 	 * - normal termination but queue could not be flushed within time limit
 	 */
 	__skb_queue_purge(&sk->sk_write_queue);
-
 	sk_stream_wait_close(sk, timeout);
 
 adjudge_to_death:
@@ -1080,6 +1243,24 @@ void dccp_shutdown(struct sock *sk, int how)
 }
 
 EXPORT_SYMBOL_GPL(dccp_shutdown);
+
+/*
+ * dccp notifier
+ */
+
+
+int register_dccp_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_register(&dccp_chain, nb);
+}
+EXPORT_SYMBOL(register_dccp_notifier);
+
+int unregister_dccp_notifier(struct notifier_block *nb)
+{
+	return atomic_notifier_chain_unregister(&dccp_chain, nb);
+}
+EXPORT_SYMBOL(unregister_dccp_notifier);
+
 
 static inline int __init dccp_mib_init(void)
 {

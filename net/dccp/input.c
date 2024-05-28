@@ -11,6 +11,10 @@
 #include <linux/slab.h>
 
 #include <net/sock.h>
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+# include <net/mpdccp.h>
+# include "mpdccp.h"
+#endif
 
 #include "ackvec.h"
 #include "ccid.h"
@@ -25,6 +29,17 @@ static void dccp_enqueue_skb(struct sock *sk, struct sk_buff *skb)
 	__skb_queue_tail(&sk->sk_receive_queue, skb);
 	skb_set_owner_r(skb, sk);
 	sk->sk_data_ready(sk);
+}
+
+/* Refresh clocks of a DCCP socket,
+ * ensuring monotically increasing values.
+ */
+static void dccp_mstamp_refresh(struct dccp_sock *dp)
+{
+	u64 val = tcp_clock_ns();
+
+	dp->dccps_clock_cache = val;
+	dp->dccps_mstamp = div_u64(val, NSEC_PER_USEC);
 }
 
 static void dccp_fin(struct sock *sk, struct sk_buff *skb)
@@ -137,6 +152,8 @@ static u16 dccp_reset_code_convert(const u8 code)
 	[DCCP_RESET_CODE_BAD_SERVICE_CODE]   = EBADRQC,
 	[DCCP_RESET_CODE_OPTION_ERROR]	     = EILSEQ,
 	[DCCP_RESET_CODE_MANDATORY_ERROR]    = EOPNOTSUPP,
+
+	[DCCP_RESET_CODE_MPDCCP_ABORTED] = ESHUTDOWN,
 	};
 
 	return code >= DCCP_MAX_RESET_CODES ? 0 : error_code[code];
@@ -150,6 +167,19 @@ static void dccp_rcv_reset(struct sock *sk, struct sk_buff *skb)
 
 	/* Queue the equivalent of TCP fin so that dccp_recvmsg exits the loop */
 	dccp_fin(sk, skb);
+
+	if(err == ESHUTDOWN){				//MPDCCP Fast-Close requires RST reply
+		switch (sk->sk_state) {
+		case DCCP_OPEN:
+			dccp_set_state(sk, DCCP_PASSIVE_CLOSE);
+		case DCCP_PASSIVE_CLOSE:
+			return;
+		case DCCP_ACTIVE_CLOSEREQ:
+			dccp_send_reset(sk, DCCP_RESET_CODE_MPDCCP_ABORTED);
+			dccp_done(sk);
+			return;
+		}
+	}
 
 	if (err && !sock_flag(sk, SOCK_DEAD))
 		sk_wake_async(sk, SOCK_WAKE_IO, POLL_ERR);
@@ -169,7 +199,12 @@ static void dccp_handle_ackvec_processing(struct sock *sk, struct sk_buff *skb)
 
 static void dccp_deliver_input_to_ccids(struct sock *sk, struct sk_buff *skb)
 {
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	struct dccp_sock *dp = dccp_sk(sk);
+	dp->dccps_lrcvtime = tcp_jiffies32;
+#else
 	const struct dccp_sock *dp = dccp_sk(sk);
+#endif
 
 	/* Don't deliver to RX CCID when node has shut down read end. */
 	if (!(sk->sk_shutdown & RCV_SHUTDOWN))
@@ -284,10 +319,16 @@ static int __dccp_rcv_established(struct sock *sk, struct sk_buff *skb,
 				  const struct dccp_hdr *dh, const unsigned int len)
 {
 	struct dccp_sock *dp = dccp_sk(sk);
-
 	switch (dccp_hdr(skb)->dccph_type) {
 	case DCCP_PKT_DATAACK:
 	case DCCP_PKT_DATA:
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+		/* Data packets on MP need additional checks */
+		if (is_mpdccp(sk)) {
+			if (mpdccp_rcv_established(sk))
+				goto discard;
+		}
+#endif
 		/*
 		 * FIXME: schedule DATA_DROPPED (RFC 4340, 11.7.2) if and when
 		 * - sk_shutdown == RCV_SHUTDOWN, use Code 1, "Not Listening"
@@ -364,6 +405,8 @@ discard:
 int dccp_rcv_established(struct sock *sk, struct sk_buff *skb,
 			 const struct dccp_hdr *dh, const unsigned int len)
 {
+	dccp_mstamp_refresh(dccp_sk(sk)); // alerab
+  
 	if (dccp_check_seqno(sk, skb))
 		goto discard;
 
@@ -371,6 +414,7 @@ int dccp_rcv_established(struct sock *sk, struct sk_buff *skb,
 		return 1;
 
 	dccp_handle_ackvec_processing(sk, skb);
+
 	dccp_deliver_input_to_ccids(sk, skb);
 
 	return __dccp_rcv_established(sk, skb, dh, len);
@@ -419,6 +463,13 @@ static int dccp_rcv_request_sent_state_process(struct sock *sk,
 		 */
 		if (dccp_parse_options(sk, NULL, skb))
 			return 1;
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+		if (is_mpdccp(sk)) {
+			if (mpdccp_rcv_request_sent_state_process(sk, skb))
+				return 1;
+		}
+#endif
 
 		/* Obtain usec RTT sample from SYN exchange (used by TFRC). */
 		if (likely(dp->dccps_options_received.dccpor_timestamp_echo))
@@ -494,7 +545,15 @@ static int dccp_rcv_request_sent_state_process(struct sock *sk,
 			__kfree_skb(skb);
 			return 0;
 		}
-		dccp_send_ack(sk);
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+		/* For MPDCCP the ACK must be in the rtx queue */
+		if (is_mpdccp(sk) && MPDCCP_CB(sk) && !MPDCCP_CB(sk)->fallback_sp)
+			dccp_send_ack_entail(sk);
+		else
+#endif
+			dccp_send_ack(sk);
+
 		return -1;
 	}
 
@@ -554,7 +613,15 @@ static int dccp_rcv_respond_partopen_state_process(struct sock *sk,
 		}
 
 		dp->dccps_osr = DCCP_SKB_CB(skb)->dccpd_seq;
+
 		dccp_set_state(sk, DCCP_OPEN);
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+		if (is_mpdccp(sk)) {
+			if (mpdccp_rcv_respond_partopen_state_process(sk, dh->dccph_type))
+				break;
+		}
+#endif
 
 		if (dh->dccph_type == DCCP_PKT_DATAACK ||
 		    dh->dccph_type == DCCP_PKT_DATA) {
@@ -576,7 +643,6 @@ int dccp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 	const int old_state = sk->sk_state;
 	bool acceptable;
 	int queued = 0;
-
 	/*
 	 *  Step 3: Process LISTEN state
 	 *
@@ -670,6 +736,8 @@ int dccp_rcv_state_process(struct sock *sk, struct sk_buff *skb,
 			return 0;
 		goto discard;
 	}
+
+	dccp_mstamp_refresh(dp); // alerab
 
 	switch (sk->sk_state) {
 	case DCCP_REQUESTING:
