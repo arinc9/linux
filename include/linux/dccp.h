@@ -15,6 +15,9 @@
 #include <net/inet_timewait_sock.h>
 #include <net/tcp_states.h>
 #include <uapi/linux/dccp.h>
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+#include <net/mpdccp_meta.h>
+#endif
 
 enum dccp_state {
 	DCCP_OPEN	     = TCP_ESTABLISHED,
@@ -157,6 +160,9 @@ static inline unsigned int dccp_hdr_len(const struct sk_buff *skb)
  * @dreq_timestamp_echo: last received timestamp to echo (13.1)
  * @dreq_timestamp_echo: the time of receiving the last @dreq_timestamp_echo
  */
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+struct mpdccp_link_info;
+#endif
 struct dccp_request_sock {
 	struct inet_request_sock dreq_inet_rsk;
 	__u64			 dreq_iss;
@@ -168,6 +174,20 @@ struct dccp_request_sock {
 	struct list_head	 dreq_featneg;
 	__u32			 dreq_timestamp_echo;
 	__u32			 dreq_timestamp_time;
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	struct mpdccp_link_info  *link_info;
+	struct mpdccp_key	mpdccp_loc_key;
+	struct mpdccp_key	mpdccp_rem_key;
+	u32 		mpdccp_loc_cix;
+	u32 		mpdccp_rem_cix;
+	u32	 		mpdccp_loc_nonce;
+	u32 			mpdccp_rem_nonce;
+	u8 			mpdccp_loc_hmac[MPDCCP_HMAC_SIZE];
+	u8 			mpdccp_rem_hmac[MPDCCP_HMAC_SIZE];
+	struct sock*		meta_sk;
+#endif
+	struct list_head	dreq_featneg_mp;
+	enum mpdccp_version	multipath_ver;
 };
 
 static inline struct dccp_request_sock *dccp_rsk(const struct request_sock *req)
@@ -185,6 +205,30 @@ struct dccp_options_received {
 	u32	dccpor_timestamp;
 	u32	dccpor_timestamp_echo;
 	u32	dccpor_elapsed_time;
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	u64 dccpor_oall_seq:48;		/* MPDCCP overall sequence number */
+	u8 dccpor_addaddr[MPDCCP_ADDADDR_SIZE];
+	u8 dccpor_addaddr_len;
+	u8 dccpor_removeaddr[4];
+	
+	u32 dccpor_join_ip_local;     /* MPDCCP mp_join received local ip */
+	u32 dccpor_join_ip_remote;     /* MPDCCP mp_join received remote ip */
+	u8 dccpor_join_id;          /* MPDCCP mp_join received address id */
+	u16 dccpor_join_port;
+
+
+	u8 dccpor_rtt_type;         /* MP_RTT type */
+	u32 dccpor_rtt_value;
+	u32 dccpor_rtt_age;
+	u8 dccpor_mp_suppkeys;			/* MPDCCP supported key types */
+	u32 dccpor_mp_token;			/* MPDCCP path token */
+	u32 dccpor_mp_cix;			/* MPDCCP Connection ID */
+	u32 dccpor_mp_nonce;			/* MPDCCP path nonce */
+	u8 dccpor_mp_hmac[MPDCCP_HMAC_SIZE];	/* MPDCCP HMAC */
+	struct mpdccp_key dccpor_mp_keys[MPDCCP_MAX_KEYS];	/* MPDCCP keys */
+	int saw_mpkey;
+	int saw_mpjoin;
+#endif
 };
 
 struct ccid;
@@ -260,6 +304,8 @@ struct dccp_ackvec;
  * @dccps_xmitlet - tasklet scheduled by the TX CCID to dequeue data packets
  * @dccps_xmit_timer - used by the TX CCID to delay sending (rate-based pacing)
  * @dccps_syn_rtt - RTT sample from Request/Response exchange (in usecs)
+ * @dccps_next - next MPDCCP subflow socket
+ * @dccps_priority - socket priority for cheapest pipe first scheduler
  */
 struct dccp_sock {
 	/* inet_connection_sock has to be the first member of dccp_sock */
@@ -303,6 +349,35 @@ struct dccp_sock {
 	__u8				dccps_sync_scheduled:1;
 	struct tasklet_struct		dccps_xmitlet;
 	struct timer_list		dccps_xmit_timer;
+	struct timer_list		dccps_rcv_timer;
+	
+	/* alerab: for ccid6 */
+	u32	data_segs_out;		/* total number of data segments sent. */
+	u64	dccps_wstamp_ns;	/* departure time for next sent data packet */
+	u64	dccps_clock_cache; 	/* cache last tcp_clock_ns() (see dccp_mstamp_refresh()) */
+	u64	dccps_mstamp;		/* most recent packet received/sent */
+	
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	unsigned int		dccps_keepalive_enable;	  
+	unsigned int		dccps_keepalive_snd_intvl;
+	unsigned int		dccps_keepalive_rcv_intvl;
+	__u32				dccps_lrcvtime;
+	__u32				dccps_lsndtime;
+#endif
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	struct mpdccp_meta_cb		mpdccp;
+#endif
+	int                 is_fast_close;
+	int 	multipath_active;
+	int 	is_kex_sk;
+	int 	auth_done;
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	u32	mpdccp_loc_nonce;
+	u32 	mpdccp_rem_nonce;
+	u8 	mpdccp_loc_hmac[MPDCCP_HMAC_SIZE];
+	u8 	mpdccp_rem_hmac[MPDCCP_HMAC_SIZE];
+	enum mpdccp_version multipath_ver;
+#endif
 };
 
 static inline struct dccp_sock *dccp_sk(const struct sock *sk)

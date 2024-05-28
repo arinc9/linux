@@ -22,6 +22,10 @@ static bool ccid2_debug;
 #define ccid2_pr_debug(format, a...)
 #endif
 
+/* Function pointer to either get SRTT or MRTT ...*/
+u32 (*get_delay_val)(struct ccid2_hc_tx_sock *hc) = ccid2_mrtt_as_delay;
+EXPORT_SYMBOL_GPL(get_delay_val);
+
 static int ccid2_hc_tx_alloc_seq(struct ccid2_hc_tx_sock *hc)
 {
 	struct ccid2_seq *seqp;
@@ -203,6 +207,7 @@ static void ccid2_cwnd_application_limited(struct sock *sk, const u32 now)
 		hc->tx_ssthresh = max(hc->tx_ssthresh,
 				     (hc->tx_cwnd >> 1) + (hc->tx_cwnd >> 2));
 		hc->tx_cwnd = (hc->tx_cwnd + win_used) >> 1;
+		dccp_pr_debug("%s: tx_cwnd set to %d for sk %p", __func__, hc->tx_cwnd, sk);
 	}
 	hc->tx_cwnd_used  = 0;
 	hc->tx_cwnd_stamp = now;
@@ -361,6 +366,18 @@ static void ccid2_rtt_estimator(struct sock *sk, const long mrtt)
 	struct ccid2_hc_tx_sock *hc = ccid2_hc_tx_sk(sk);
 	long m = mrtt ? : 1;
 
+	hc->tx_mrtt = mrtt;
+	hc->tx_last_ack_recv = ccid2_jiffies32;
+
+	if(m > 0 && hc->tx_min_rtt >= m){
+		hc->tx_min_rtt = m;
+		hc->tx_min_rtt_stamp = ccid2_jiffies32;
+	}
+	if(m > 0 && hc->tx_max_rtt <= m){
+		hc->tx_max_rtt = m;
+		hc->tx_max_rtt_stamp = ccid2_jiffies32;
+	}
+
 	if (hc->tx_srtt == 0) {
 		/* First measurement m */
 		hc->tx_srtt = m << 3;
@@ -512,6 +529,7 @@ static void ccid2_hc_tx_packet_recv(struct sock *sk, struct sk_buff *skb)
 	u64 ackno, seqno;
 	struct ccid2_seq *seqp;
 	int done = 0;
+	bool not_rst = 0;
 	unsigned int maxincr = 0;
 
 	/* check reverse path congestion */
@@ -568,6 +586,7 @@ static void ccid2_hc_tx_packet_recv(struct sock *sk, struct sk_buff *skb)
 		seqp = seqp->ccid2s_next;
 		if (seqp == hc->tx_seqh) {
 			seqp = hc->tx_seqh->ccid2s_prev;
+			not_rst = 1;
 			break;
 		}
 	}
@@ -605,9 +624,11 @@ static void ccid2_hc_tx_packet_recv(struct sock *sk, struct sk_buff *skb)
 			if (done)
 				break;
 
+
 			/* check all seqnos in the range of the vector
 			 * run length
 			 */
+
 			while (between48(seqp->ccid2s_seq,ackno_end_rl,ackno)) {
 				const u8 state = dccp_ackvec_state(avp->vec);
 
@@ -649,6 +670,7 @@ static void ccid2_hc_tx_packet_recv(struct sock *sk, struct sk_buff *skb)
 		seqp = seqp->ccid2s_next;
 		if (seqp == hc->tx_seqh) {
 			seqp = hc->tx_seqh->ccid2s_prev;
+			not_rst = 1;
 			break;
 		}
 	}
@@ -701,7 +723,7 @@ static void ccid2_hc_tx_packet_recv(struct sock *sk, struct sk_buff *skb)
 	/* restart RTO timer if not all outstanding data has been acked */
 	if (hc->tx_pipe == 0)
 		sk_stop_timer(sk, &hc->tx_rtotimer);
-	else
+	else if(!not_rst)
 		sk_reset_timer(sk, &hc->tx_rtotimer, jiffies + hc->tx_rto);
 done:
 	/* check if incoming Acks allow pending packets to be sent */
@@ -718,6 +740,11 @@ static int ccid2_hc_tx_init(struct ccid *ccid, struct sock *sk)
 
 	/* RFC 4341, 5: initialise ssthresh to arbitrarily high (max) value */
 	hc->tx_ssthresh = ~0U;
+	hc->tx_min_rtt = ~0U;
+	hc->tx_max_rtt = 0;
+
+	hc->tx_min_rtt_stamp = ccid2_jiffies32;
+	hc->tx_max_rtt_stamp = ccid2_jiffies32;
 
 	/* Use larger initial windows (RFC 4341, section 5). */
 	hc->tx_cwnd = rfc3390_bytes_to_packets(dp->dccps_mss_cache);
@@ -758,14 +785,34 @@ static void ccid2_hc_tx_exit(struct sock *sk)
 static void ccid2_hc_rx_packet_recv(struct sock *sk, struct sk_buff *skb)
 {
 	struct ccid2_hc_rx_sock *hc = ccid2_hc_rx_sk(sk);
+	//printk(KERN_INFO "natrm: enter ccid2_hc_rx_packet_recv %p", sk);
 
 	if (!dccp_data_packet(skb))
 		return;
-
 	if (++hc->rx_num_data_pkts >= dccp_sk(sk)->dccps_r_ack_ratio) {
 		dccp_send_ack(sk);
 		hc->rx_num_data_pkts = 0;
 	}
+}
+
+static void ccid2_hc_tx_get_info(struct sock *sk, struct tcp_info *info)
+{
+	info->tcpi_rto = ccid2_hc_tx_sk(sk)->tx_rto;
+	info->tcpi_rtt = ccid2_hc_tx_sk(sk)->tx_srtt;
+	info->tcpi_rttvar = ccid2_hc_tx_sk(sk)->tx_mrtt;
+	info->tcpi_segs_out = ccid2_hc_tx_sk(sk)->tx_pipe;
+	info->tcpi_snd_cwnd = ccid2_hc_tx_sk(sk)->tx_cwnd;
+	info->tcpi_last_data_sent = ccid2_hc_tx_sk(sk)->tx_lsndtime;
+	//calculate time since last rtt calculation.
+	info->tcpi_last_ack_recv = (ccid2_hc_tx_sk(sk)->tx_last_ack_recv > 0) ? ccid2_jiffies32 - ccid2_hc_tx_sk(sk)->tx_last_ack_recv : 0;
+	
+	info->tcpi_min_rtt = ccid2_hc_tx_sk(sk)->tx_min_rtt;
+	//calculate time since tx_min_rtt_stamp was set and store it in some unused var.
+	info->tcpi_last_ack_sent = (ccid2_hc_tx_sk(sk)->tx_min_rtt_stamp > 0) ? ccid2_jiffies32 - ccid2_hc_tx_sk(sk)->tx_min_rtt_stamp : 0;
+	
+	info->tcpi_snd_mss = ccid2_hc_tx_sk(sk)->tx_max_rtt;
+	//calculate time since tx_min_rtt_stamp was set and store it in some unused var.
+	info->tcpi_rcv_mss = (ccid2_hc_tx_sk(sk)->tx_max_rtt_stamp > 0) ? ccid2_jiffies32 - ccid2_hc_tx_sk(sk)->tx_max_rtt_stamp : 0;
 }
 
 struct ccid_operations ccid2_ops = {
@@ -778,6 +825,7 @@ struct ccid_operations ccid2_ops = {
 	.ccid_hc_tx_packet_sent	  = ccid2_hc_tx_packet_sent,
 	.ccid_hc_tx_parse_options = ccid2_hc_tx_parse_options,
 	.ccid_hc_tx_packet_recv	  = ccid2_hc_tx_packet_recv,
+	.ccid_hc_tx_get_info	  = ccid2_hc_tx_get_info,
 	.ccid_hc_rx_obj_size	  = sizeof(struct ccid2_hc_rx_sock),
 	.ccid_hc_rx_packet_recv	  = ccid2_hc_rx_packet_recv,
 };

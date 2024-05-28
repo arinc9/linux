@@ -14,10 +14,16 @@
 
 #include <net/inet_sock.h>
 #include <net/sock.h>
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+#  include <net/mpdccp.h>
+#  include <net/mpdccp_meta.h>
+#endif
 
 #include "ackvec.h"
 #include "ccid.h"
 #include "dccp.h"
+#include "output.h"
+#include "feat.h"
 
 static inline void dccp_event_ack_sent(struct sock *sk)
 {
@@ -31,6 +37,35 @@ static struct sk_buff *dccp_skb_entail(struct sock *sk, struct sk_buff *skb)
 	WARN_ON(sk->sk_send_head);
 	sk->sk_send_head = skb;
 	return skb_clone(sk->sk_send_head, gfp_any());
+}
+
+static void dccp_update_skb_after_send(struct sock *sk, unsigned int len, u64 prior_wstamp) {
+	struct dccp_sock *dp = dccp_sk(sk);
+
+	if (sk->sk_pacing_status != SK_PACING_NONE) {
+		unsigned long rate = sk->sk_pacing_rate;
+
+		/* Original sch_fq does not pace first 10 MSS */
+		if (rate != ~0UL && rate && dp->data_segs_out >= 10) {
+			u64 len_ns = div64_u64(len * NSEC_PER_SEC, rate);
+			u64 credit = dp->dccps_wstamp_ns - prior_wstamp;
+
+			/* take into account OS jitter */
+			len_ns -= min_t(u64, len_ns / 2, credit);
+			dp->dccps_wstamp_ns += len_ns;
+		}
+	}
+}
+
+/* Refresh clocks of a DCCP socket,
+ * ensuring monotically increasing values.
+ */
+static void dccp_mstamp_refresh(struct dccp_sock *dp)
+{
+	u64 val = tcp_clock_ns();
+
+	dp->dccps_clock_cache = val;
+	dp->dccps_mstamp = div_u64(val, NSEC_PER_USEC);
 }
 
 /*
@@ -47,6 +82,11 @@ static int dccp_transmit_skb(struct sock *sk, struct sk_buff *skb)
 		struct dccp_sock *dp = dccp_sk(sk);
 		struct dccp_skb_cb *dcb = DCCP_SKB_CB(skb);
 		struct dccp_hdr *dh;
+		unsigned int len = skb->len;
+
+		u64 prior_wstamp = dp->dccps_wstamp_ns;
+		dp->dccps_wstamp_ns = max(dp->dccps_wstamp_ns, dp->dccps_clock_cache); // alerab: check this
+    
 		/* XXX For now we're using only 48 bits sequence numbers */
 		const u32 dccp_header_size = sizeof(*dh) +
 					     sizeof(struct dccp_hdr_ext) +
@@ -58,12 +98,14 @@ static int dccp_transmit_skb(struct sock *sk, struct sk_buff *skb)
 		 * Update GSS for real only if option processing below succeeds.
 		 */
 		dcb->dccpd_seq = ADD48(dp->dccps_gss, 1);
-
+		
 		switch (dcb->dccpd_type) {
 		case DCCP_PKT_DATA:
 			set_ack = 0;
+			dp->data_segs_out++;
 			fallthrough;
 		case DCCP_PKT_DATAACK:
+			dp->data_segs_out++;
 		case DCCP_PKT_RESET:
 			break;
 
@@ -94,6 +136,7 @@ static int dccp_transmit_skb(struct sock *sk, struct sk_buff *skb)
 			kfree_skb(skb);
 			return -EPROTO;
 		}
+
 
 
 		/* Build DCCP header and checksum it. */
@@ -136,10 +179,17 @@ static int dccp_transmit_skb(struct sock *sk, struct sk_buff *skb)
 		DCCP_INC_STATS(DCCP_MIB_OUTSEGS);
 
 		err = icsk->icsk_af_ops->queue_xmit(sk, skb, &inet->cork.fl);
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+		dp->dccps_lsndtime = tcp_jiffies32;
+#endif
+		if (!err) /* alerab: tcp uses a copy of skb, but we only need the len */
+			dccp_update_skb_after_send(sk, len, prior_wstamp);
+
 		return net_xmit_eval(err);
 	}
 	return -ENOBUFS;
 }
+EXPORT_SYMBOL_GPL(dccp_transmit_skb);
 
 /**
  * dccp_determine_ccmps  -  Find out about CCID-specific packet-size limits
@@ -274,6 +324,7 @@ static void dccp_xmit_packet(struct sock *sk)
 		DCCP_SKB_CB(skb)->dccpd_type = DCCP_PKT_DATA;
 	}
 
+	dccp_mstamp_refresh(dp); // alerab
 	err = dccp_transmit_skb(sk, skb);
 	if (err)
 		dccp_pr_debug("transmit_skb() returned err=%d\n", err);
@@ -344,9 +395,18 @@ void dccp_write_xmit(struct sock *sk)
 {
 	struct dccp_sock *dp = dccp_sk(sk);
 	struct sk_buff *skb;
+	int		rc;
 
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if (mpdccp_is_meta (sk)) {
+		rc = mpdccp_write_xmit (sk);
+		if (rc < 0)
+			dccp_pr_debug("error in mpdccp_write_xmit: %d", rc);
+		return;
+	}
+#endif
 	while ((skb = dccp_qpolicy_top(sk))) {
-		int rc = ccid_hc_tx_send_packet(dp->dccps_hc_tx_ccid, sk, skb);
+		rc = ccid_hc_tx_send_packet(dp->dccps_hc_tx_ccid, sk, skb);
 
 		switch (ccid_packet_dequeue_eval(rc)) {
 		case CCID_PACKET_WILL_DEQUEUE_LATER:
@@ -364,6 +424,7 @@ void dccp_write_xmit(struct sock *sk)
 		}
 	}
 }
+EXPORT_SYMBOL_GPL(dccp_write_xmit);
 
 /**
  * dccp_retransmit_skb  -  Retransmit Request, Close, or CloseReq packets
@@ -422,6 +483,17 @@ struct sk_buff *dccp_make_response(const struct sock *sk, struct dst_entry *dst,
 
 	if (dccp_insert_options_rsk(dreq, skb))
 		goto response_failed;
+
+#if IS_ENABLED(CONFIG_IP_MPDCCP)
+	if ((mpdccp_isactive(sk) > 0) && dreq && (dreq->multipath_ver != MPDCCP_VERS_UNDEFINED)) {
+		if (dreq->meta_sk && dreq->meta_sk->sk_state != DCCP_OPEN) {
+			dccp_pr_debug("meta socket %p not in OPEN state during response\n", dreq->meta_sk);
+			goto response_failed;
+		}
+		if (dccp_insert_options_rsk_mp(sk, dreq, skb))
+			goto response_failed;
+	}
+#endif
 
 	/* Build and checksum header */
 	dh = dccp_zeroed_hdr(skb, dccp_header_size);
@@ -505,6 +577,7 @@ EXPORT_SYMBOL_GPL(dccp_ctl_make_reset);
 int dccp_send_reset(struct sock *sk, enum dccp_reset_codes code)
 {
 	struct sk_buff *skb;
+  struct dccp_sock *dp = dccp_sk(sk);
 	/*
 	 * FIXME: what if rebuild_header fails?
 	 * Should we be doing a rebuild_header here?
@@ -523,6 +596,7 @@ int dccp_send_reset(struct sock *sk, enum dccp_reset_codes code)
 	DCCP_SKB_CB(skb)->dccpd_type	   = DCCP_PKT_RESET;
 	DCCP_SKB_CB(skb)->dccpd_reset_code = code;
 
+  dccp_mstamp_refresh(dp);
 	return dccp_transmit_skb(sk, skb);
 }
 
@@ -557,6 +631,7 @@ int dccp_connect(struct sock *sk)
 
 	DCCP_SKB_CB(skb)->dccpd_type = DCCP_PKT_REQUEST;
 
+  dccp_mstamp_refresh(dp);
 	dccp_transmit_skb(sk, dccp_skb_entail(sk, skb));
 	DCCP_INC_STATS(DCCP_MIB_ACTIVEOPENS);
 
@@ -571,10 +646,11 @@ EXPORT_SYMBOL_GPL(dccp_connect);
 
 void dccp_send_ack(struct sock *sk)
 {
+	struct sk_buff *skb;
+	int err;
 	/* If we have been reset, we may not send again. */
 	if (sk->sk_state != DCCP_CLOSED) {
-		struct sk_buff *skb = alloc_skb(sk->sk_prot->max_header,
-						GFP_ATOMIC);
+		skb = alloc_skb(sk->sk_prot->max_header, GFP_ATOMIC);
 
 		if (skb == NULL) {
 			inet_csk_schedule_ack(sk);
@@ -588,11 +664,75 @@ void dccp_send_ack(struct sock *sk)
 		/* Reserve space for headers */
 		skb_reserve(skb, sk->sk_prot->max_header);
 		DCCP_SKB_CB(skb)->dccpd_type = DCCP_PKT_ACK;
-		dccp_transmit_skb(sk, skb);
+		err = dccp_transmit_skb(sk, skb);
 	}
 }
 
 EXPORT_SYMBOL_GPL(dccp_send_ack);
+
+void dccp_send_ack_entail(struct sock *sk)
+{
+	struct sk_buff *skb;
+
+	/* If we have been reset, we may not send again. */
+	if (sk->sk_state != DCCP_CLOSED) {
+		skb = alloc_skb(sk->sk_prot->max_header, GFP_ATOMIC);
+
+		if (skb == NULL) {
+			inet_csk_schedule_ack(sk);
+			inet_csk(sk)->icsk_ack.ato = TCP_ATO_MIN;
+			inet_csk_reset_xmit_timer(sk, ICSK_TIME_DACK,
+						  TCP_DELACK_MAX,
+						  DCCP_RTO_MAX);
+			return;
+		}
+
+		/* Reserve space for headers */
+		skb_reserve(skb, sk->sk_prot->max_header);
+		DCCP_SKB_CB(skb)->dccpd_type = DCCP_PKT_ACK;
+
+
+		skb = dccp_skb_entail(sk, skb);
+		inet_csk_reset_xmit_timer(sk, ICSK_TIME_RETRANS,
+					  DCCP_TIMEOUT_INIT, DCCP_RTO_MAX);
+
+		dccp_transmit_skb(sk, skb);
+	}
+}
+
+EXPORT_SYMBOL_GPL(dccp_send_ack_entail);
+
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+void dccp_send_keepalive(struct sock *sk)
+{
+	struct sk_buff *skb;
+	int err;
+
+	/* If we have been reset, we may not send again. */
+	dccp_pr_debug("enter dccp_send_keepalive %p", sk);
+	if (sk->sk_state != DCCP_CLOSED) {
+		dccp_pr_debug("enter dccp_send_ack if not CLOSED %p", sk);
+		skb = alloc_skb(sk->sk_prot->max_header, GFP_ATOMIC);
+
+		if (skb == NULL) {
+			dccp_pr_debug("enter dccp_send_keepalive if skb NULL %p", sk);
+			return;
+		}
+
+		/* Reserve space for headers */
+		skb_reserve(skb, sk->sk_prot->max_header);
+		DCCP_SKB_CB(skb)->dccpd_type = DCCP_PKT_DATA;
+		dccp_pr_debug("enter dccp_send_ack just be transmit");
+    
+		dccp_mstamp_refresh(dccp_sk(sk));
+    
+		err = dccp_transmit_skb(sk, skb);
+		}
+
+}
+EXPORT_SYMBOL_GPL(dccp_send_keepalive);
+#endif
+
 
 #if 0
 /* FIXME: Is this still necessary (11.3) - currently nowhere used by DCCP. */
@@ -630,6 +770,7 @@ void dccp_send_delayed_ack(struct sock *sk)
 void dccp_send_sync(struct sock *sk, const u64 ackno,
 		    const enum dccp_pkt_type pkt_type)
 {
+  struct dccp_sock *dp = dccp_sk(sk);
 	/*
 	 * We are not putting this on the write queue, so
 	 * dccp_transmit_skb() will set the ownership to this
@@ -652,8 +793,9 @@ void dccp_send_sync(struct sock *sk, const u64 ackno,
 	 * Clear the flag in case the Sync was scheduled for out-of-band data,
 	 * such as carrying a long Ack Vector.
 	 */
-	dccp_sk(sk)->dccps_sync_scheduled = 0;
+	dp->dccps_sync_scheduled = 0;
 
+  dccp_mstamp_refresh(dp);
 	dccp_transmit_skb(sk, skb);
 }
 

@@ -158,11 +158,47 @@ out:
 	sock_put(sk);
 }
 
+
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+void dccp_set_keepalive(struct sock *sk, int val)
+{
+	if ((1 << sk->sk_state) & (DCCPF_CLOSED | DCCPF_LISTEN))
+		return;
+	dccp_pr_debug("set keepalive sk %p", sk);
+
+	if (val && !sock_flag(sk, SOCK_KEEPOPEN))
+	{
+		inet_csk_reset_keepalive_timer(sk, dccp_keepalive_snd_when(dccp_sk(sk)));
+		sk_reset_timer(sk, &dccp_sk(sk)->dccps_rcv_timer, jiffies + dccp_keepalive_rcv_when(dccp_sk(sk)));
+		dccp_pr_debug("after reset sendt %d, rcvt %d",  dccp_keepalive_snd_when(dccp_sk(sk)), dccp_keepalive_rcv_when(dccp_sk(sk)));
+	}
+	else if (!val)
+		inet_csk_delete_keepalive_timer(sk);
+}
+EXPORT_SYMBOL_GPL(dccp_set_keepalive);
+#endif
 static void dccp_keepalive_timer(struct timer_list *t)
 {
 	struct sock *sk = from_timer(sk, t, sk_timer);
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	struct dccp_sock *dp = dccp_sk(sk);
+	u32 elapsed;
 
-	pr_err("dccp should not use a keepalive timer !\n");
+	bh_lock_sock(sk);
+	if (sock_owned_by_user(sk)){
+		/* Try again later. */
+		inet_csk_reset_keepalive_timer (sk, HZ/20);
+		goto out;
+	}
+	dccp_pr_debug("enter dccp_keepalive_timer sk %p", sk);
+	//pr_err("dccp should not use a keepalive timer !\n");
+	elapsed = dccp_keepalive_snd_elapsed(dp);
+	if (elapsed > dccp_keepalive_snd_when(dp))
+		dccp_send_keepalive(sk);
+	inet_csk_reset_keepalive_timer(sk, dccp_keepalive_snd_when(dp));
+out:
+	bh_unlock_sock(sk);
+#endif
 	sock_put(sk);
 }
 
@@ -176,6 +212,7 @@ static void dccp_delack_timer(struct timer_list *t)
 	bh_lock_sock(sk);
 	if (sock_owned_by_user(sk)) {
 		/* Try again later. */
+printk ("delack blocked\n");
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_DELAYEDACKLOCKED);
 		sk_reset_timer(sk, &icsk->icsk_delack_timer,
 			       jiffies + TCP_DELACK_MIN);
@@ -240,12 +277,52 @@ static void dccp_write_xmit_timer(struct timer_list *t)
 	dccp_write_xmitlet((unsigned long)sk);
 }
 
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+static void dccp_rcv_timer(struct timer_list *t)
+{
+	//struct sock *sk = (struct sock *)data;
+	struct dccp_sock *dp = from_timer(dp, t, dccps_xmit_timer);
+	struct sock *sk = &dp->dccps_inet_connection.icsk_inet.sk;
+	u32 elapsed;
+	//struct dccp_sock *dp = dccp_sk(sk);
+	dccp_pr_debug("enter rcv timer sk %p", sk);
+	if (sk->sk_state == DCCP_CLOSED || sk->sk_state == DCCP_CLOSING) {
+		dccp_pr_debug ("socket %p already closed/closing\n", sk);
+		return;
+	}
+	if (sock_owned_by_user(sk))
+		dccp_pr_debug("sock owned by user");
+	
+	bh_lock_sock(sk);
+	if (sk->sk_state == DCCP_OPEN || sk->sk_state == DCCP_PARTOPEN) {
+		elapsed = dccp_keepalive_rcv_elapsed(dp);
+		if (elapsed > dccp_keepalive_rcv_when(dp))
+		{
+			dccp_pr_debug("no data received sk %p elapsed %u", sk, elapsed);
+			bh_unlock_sock(sk);
+			sock_put(sk);
+			dccp_close(sk, 0);
+			return;
+		}
+	}
+	sk_reset_timer(sk, &dccp_sk(sk)->dccps_rcv_timer, jiffies + dccp_keepalive_rcv_when(dp));
+	bh_unlock_sock(sk);
+	sock_put(sk);
+
+}
+#endif
+
 void dccp_init_xmit_timers(struct sock *sk)
 {
 	struct dccp_sock *dp = dccp_sk(sk);
 
 	tasklet_init(&dp->dccps_xmitlet, dccp_write_xmitlet, (unsigned long)sk);
 	timer_setup(&dp->dccps_xmit_timer, dccp_write_xmit_timer, 0);
+#if IS_ENABLED(CONFIG_DCCP_KEEPALIVE)
+	//setup_timer(&dp->dccps_rcv_timer, dccp_rcv_timer,
+	//						     (unsigned long)sk);
+	timer_setup(&dp->dccps_rcv_timer, dccp_rcv_timer, 0);
+#endif
 	inet_csk_init_xmit_timers(sk, &dccp_write_timer, &dccp_delack_timer,
 				  &dccp_keepalive_timer);
 }
