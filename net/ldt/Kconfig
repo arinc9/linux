@@ -1,0 +1,5 @@
+config LDT
+        tristate "ldt"
+	depends on IP_MPDCCP
+        help
+          LDT is a (mp-)dccp tunnel in kernel space.
