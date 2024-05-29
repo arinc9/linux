@@ -1,0 +1,4 @@
+config UDCCP
+        tristate "u-dccp"
+        help
+          U-DCCP is a netfilter hook to convert DCCP to UDP and vice versa.
