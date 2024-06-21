@@ -36,6 +36,8 @@ config NET_DSA_LANTIQ_GSWIP
 
 config NET_DSA_MT7530
 	tristate "MediaTek MT7530 and MT7531 Ethernet switch support"
+	select IRQ_DOMAIN
+	select REGMAP
 	select NET_DSA_TAG_MTK
 	imply NET_DSA_MT7530_MDIO
 	imply NET_DSA_MT7530_MMIO
@@ -60,6 +62,7 @@ config NET_DSA_MT7530_MMIO
 	tristate "MediaTek MT7530 MMIO interface driver"
 	depends on NET_DSA_MT7530
 	depends on HAS_IOMEM
+	select REGMAP_MMIO
 	imply MEDIATEK_GE_SOC_PHY
 	help
 	  This enables support for the built-in Ethernet switch found
