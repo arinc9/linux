@@ -1,14 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 
 #include <linux/gpio/consumer.h>
-#include <linux/mdio.h>
-#include <linux/module.h>
 #include <linux/pcs/pcs-mtk-lynxi.h>
-#include <linux/of_irq.h>
-#include <linux/of_mdio.h>
-#include <linux/of_net.h>
-#include <linux/of_platform.h>
-#include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/regulator/consumer.h>
 #include <net/dsa.h>
